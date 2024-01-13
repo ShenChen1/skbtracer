@@ -1,7 +1,6 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
-set(CMAKE_CROSS_PREFIX  "aarch64-buildroot-linux-gnu")
 set(CMAKE_C_COMPILER    "aarch64-buildroot-linux-gnu-gcc")
 set(CMAKE_CXX_COMPILER  "aarch64-buildroot-linux-gnu-g++")
 set(CMAKE_AR            "aarch64-buildroot-linux-gnu-ar")

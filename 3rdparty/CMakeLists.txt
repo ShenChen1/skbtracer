@@ -12,7 +12,7 @@ ExternalProject_Add(libbpf
     LIBDIR=
     UAPIDIR=
     ARCH=${CMAKE_SYSTEM_PROCESSOR}
-    CROSS_COMPILE=${CMAKE_CROSS_PREFIX}-
+    CROSS_COMPILE=${CROSS_COMPILE_PREFIX}
     install install_uapi_headers
   BUILD_IN_SOURCE TRUE
   INSTALL_COMMAND ""

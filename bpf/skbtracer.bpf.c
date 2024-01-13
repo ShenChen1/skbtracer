@@ -1,21 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
-/* Copyright (c) 2020 Facebook */
-#include <linux/bpf.h>
+#include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
-
-int my_pid = 0;
-
-SEC("tp/syscalls/sys_enter_write")
-int handle_tp(void *ctx)
+SEC("tracepoint/skb/kfree_skb")
+int tracepoint_kmem_cache_alloc_node(void *__args)
 {
-	int pid = bpf_get_current_pid_tgid() >> 32;
-
-	if (pid != my_pid)
-		return 0;
-
-	bpf_printk("BPF triggered from PID %d.\n", pid);
-
+	struct trace_event_raw_kfree_skb *arg = __args;
+	bpf_printk("kfree_skb: skb=%p, reason=%d\n", arg->skbaddr, arg->reason);
 	return 0;
 }
