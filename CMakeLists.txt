@@ -22,5 +22,4 @@ get_target_arch()
 get_cross_compile_prefix()
 
 add_subdirectory(3rdparty)
-add_subdirectory(bpf)
-add_subdirectory(app)
+add_subdirectory(src)

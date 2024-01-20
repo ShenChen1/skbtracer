@@ -29,3 +29,8 @@ ExternalProject_Add(bpftool
   INSTALL_COMMAND ""
   STEP_TARGETS build
 )
+
+add_library(log STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/log.c/src/log.c)
+target_include_directories(log
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/log.c/src/)

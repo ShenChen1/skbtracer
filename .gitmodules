@@ -7,3 +7,6 @@
 [submodule "3rdparty/bcc"]
 	path = 3rdparty/bcc
 	url = https://github.com/iovisor/bcc.git
+[submodule "3rdparty/log.c"]
+	path = 3rdparty/log.c
+	url = https://github.com/rxi/log.c.git
