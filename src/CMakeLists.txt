@@ -1,4 +1,6 @@
+add_compile_options(-Wall -Werror -g)
 add_subdirectory(app)
 add_subdirectory(bpf)
 add_subdirectory(symdb)
 add_subdirectory(trace)
+add_subdirectory(utils)

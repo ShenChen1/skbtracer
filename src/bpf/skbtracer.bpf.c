@@ -10,7 +10,7 @@ kprobe_skb(struct sk_buff *skb, struct pt_regs *ctx)
     return BPF_OK;
 }
 
-#define SKBTRACER_ADD_KPROBE(X)                                            \
+#define SKBTRACER_ADD_KPROBE(X)                                       \
     SEC("kprobe/skb-" #X)                                             \
     int kprobe_skb_##X(struct pt_regs *ctx)                           \
     {                                                                 \
