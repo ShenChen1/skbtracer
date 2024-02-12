@@ -8,5 +8,7 @@ target_link_libraries(${PROJECT_NAME}
     symdb
     trace
     utils)
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bpf)
 
 install(TARGETS ${PROJECT_NAME} DESTINATION ${CMAKE_INSTALL_BINDIR})

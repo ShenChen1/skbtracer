@@ -245,6 +245,32 @@ static int symdb_destroy(symdb_mgr_t *self)
     return 0;
 }
 
+static const char *symdb_get_func_by_addr(symdb_mgr_t *self, unsigned long addr)
+{
+    const struct ksym *sym;
+    symdb_mgr_priv_t *priv = self->priv;
+
+    sym = ksyms__map_addr(priv->ksyms, addr);
+    if (sym == NULL) {
+        return NULL;
+    }
+
+    return sym->name;
+}
+
+static unsigned long symdb_get_addr_by_func(symdb_mgr_t *self, const char *func)
+{
+    const struct ksym *sym;
+    symdb_mgr_priv_t *priv = self->priv;
+
+    sym = ksyms__get_symbol(priv->ksyms, func);
+    if (sym == NULL) {
+        return 0;
+    }
+
+    return sym->addr;
+}
+
 static int symdb_get_skb_func_list(symdb_mgr_t *self, const char ***list, size_t *size)
 {
     int i = 0, cnt;
@@ -281,7 +307,6 @@ static int symdb_get_skb_func_param_pos(symdb_mgr_t *self, const char *func, int
     return 0;
 }
 
-
 symdb_mgr_t *createSymdbMgr()
 {
     symdb_mgr_t *mgr = NULL;
@@ -299,6 +324,8 @@ symdb_mgr_t *createSymdbMgr()
     }
     mgr->priv = priv;
     mgr->destroy = symdb_destroy;
+    mgr->get_func_by_addr = symdb_get_func_by_addr;
+    mgr->get_addr_by_func = symdb_get_addr_by_func;
     mgr->get_skb_func_list = symdb_get_skb_func_list;
     mgr->get_skb_func_param_pos = symdb_get_skb_func_param_pos;
 

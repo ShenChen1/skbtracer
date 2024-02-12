@@ -7,6 +7,9 @@ typedef struct symdb_mgr {
     void *priv;
     int (*destroy)(struct symdb_mgr *self);
 
+    const char *(*get_func_by_addr)(struct symdb_mgr *self, unsigned long addr);
+    unsigned long (*get_addr_by_func)(struct symdb_mgr *self, const char *func);
+
     int (*get_skb_func_list)(struct symdb_mgr *self, const char ***list, size_t *size);
     int (*get_skb_func_param_pos)(struct symdb_mgr *self, const char *func, int *pos);
 

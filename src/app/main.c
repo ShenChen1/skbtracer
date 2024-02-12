@@ -3,6 +3,7 @@
 #include <bpf/libbpf.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -10,36 +11,59 @@
 #include <unistd.h>
 
 #include "log.h"
+#include "skbtracer.h"
 #include "skbtracer.skel.h"
 #include "symdb.h"
 #include "tracer.h"
+#include "utils.h"
 #include "valuemap.h"
 
 static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
 {
-	return vfprintf(stderr, format, args);
+    return vfprintf(stderr, format, args);
 }
 
-static void read_trace_pipe(void)
+static void handle_events(struct skbtracer_bpf *skel, symdb_mgr_t *symdb)
 {
-    int trace_fd = open("/sys/kernel/debug/tracing/trace_pipe", O_RDONLY, 0);
-    if (trace_fd < 0)
+    int err;
+    int map_fd = bpf_map__fd(skel->maps.events);
+    if (map_fd < 0) {
+        log_error("Failed to get events map fd");
         return;
+    }
 
+    struct event_t event;
     while (1) {
-        static char buf[4096];
-        ssize_t sz;
-
-        sz = read(trace_fd, buf, sizeof(buf) - 1);
-        if (sz > 0) {
-            printf("%.*s", (int)sz, buf);
+        // put map_fd into poll, and wait for events
+        struct pollfd fds[] = {{
+            .fd = map_fd,
+            .events = POLLIN,
+        }};
+        int ret = poll(fds, ARRAY_SIZE(fds), -1);
+        if (ret < 0) {
+            log_error("Failed to poll events: %d", errno);
+            break;
         }
+
+        // read events from map
+        err = bpf_map__lookup_and_delete_elem(skel->maps.events, NULL, 0, &event, sizeof(event), 0);
+        if (err) {
+            if (errno == ENOENT)
+                continue;
+            log_error("Failed to lookup elem: %d", errno);
+            break;
+        }
+
+        const char *func = symdb->get_func_by_addr(symdb, event.addr);
+        printf("[%8u][%16llx]: %32s(%16llx)\n", event.pid, event.skb_addr, func, event.addr);
     }
 }
 
 int main(int argc, char **argv)
 {
     int err;
+    set_max_rlimit();
+
     symdb_mgr_t *symdb = createSymdbMgr();
     if (symdb == NULL) {
         log_error("Failed to create symdb mgr");
@@ -94,8 +118,11 @@ int main(int argc, char **argv)
             bpf_program__attach_kprobe(prog, false, skb_func_list[i]);
         }
     }
+    bpf_program__attach_kprobe(skel->progs.skb_clone, true, "skb_clone");
+    bpf_program__attach_kprobe(skel->progs.skb_copy, true, "skb_copy");
+    bpf_program__attach_kprobe(skel->progs.kfree_skbmem, false, "kfree_skbmem");
 
-    read_trace_pipe();
+    handle_events(skel, symdb);
 
 cleanup:
     if (symdb)
