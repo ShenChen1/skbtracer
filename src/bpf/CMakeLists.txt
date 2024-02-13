@@ -1,7 +1,5 @@
 set(BPFOBJECT_BPFTOOL_EXE ${PROJECT_BINARY_DIR}/3rdparty/bpftool/bootstrap/bpftool)
 set(BPFOBJECT_VMLINUX_H ${PROJECT_SOURCE_DIR}/3rdparty/bcc/libbpf-tools/${ARCH}/vmlinux.h)
-set(LIBBPF_INCLUDE_DIRS ${PROJECT_BINARY_DIR}/3rdparty/libbpf)
-set(LIBBPF_LIBRARIES ${PROJECT_BINARY_DIR}/3rdparty/libbpf/libbpf.a)
 
 find_package(BpfObject REQUIRED)
 # Build object skeleton and depend skeleton on libbpf build

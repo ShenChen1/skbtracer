@@ -7,3 +7,9 @@
 [submodule "3rdparty/bcc"]
 	path = 3rdparty/bcc
 	url = https://github.com/iovisor/bcc.git
+[submodule "3rdparty/spdlog"]
+	path = 3rdparty/spdlog
+	url = https://github.com/gabime/spdlog.git
+[submodule "3rdparty/libpcap"]
+	path = 3rdparty/libpcap
+	url = https://github.com/the-tcpdump-group/libpcap.git

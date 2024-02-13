@@ -1,6 +1,27 @@
 #ifndef __SYMDB_MGR_H__
 #define __SYMDB_MGR_H__
 
+#include <string>
+
+class SymdbMgr {
+public:
+    SymdbMgr();
+
+    const std::string get_func_by_addr(unsigned long addr);
+
+};
+
+
+
+
+
+
+
+
+
+
+
+
 #include <stddef.h>
 
 typedef struct symdb_mgr {

@@ -30,11 +30,27 @@ ExternalProject_Add(bpftool
   STEP_TARGETS build
 )
 
-add_library(log OBJECT
-  ${CMAKE_CURRENT_SOURCE_DIR}/log.c/src/log.c)
-target_include_directories(log
-  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/log.c/src/)
+ExternalProject_Add(spdlog
+  PREFIX spdlog
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/spdlog
+  CONFIGURE_COMMAND cmake -Bbuild
+    -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/spdlog
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+  BUILD_COMMAND cmake --build build
+  BUILD_IN_SOURCE TRUE
+  INSTALL_COMMAND cmake --install build
+  STEP_TARGETS build
+)
 
-add_library(uthash INTERFACE)
-target_include_directories(uthash
-  INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/uthash/src/)
+ExternalProject_Add(libpcap
+  PREFIX libpcap
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libpcap
+  CONFIGURE_COMMAND ./autogen.sh && ./configure
+    --prefix=${CMAKE_CURRENT_BINARY_DIR}/libpcap
+    --host=${CROSS_COMPILE}
+    --enable-shared=no
+  BUILD_COMMAND make install
+  BUILD_IN_SOURCE TRUE
+  INSTALL_COMMAND ""
+  STEP_TARGETS build
+)

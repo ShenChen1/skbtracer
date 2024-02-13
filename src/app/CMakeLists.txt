@@ -1,8 +1,7 @@
 project(skbtracer)
 
 add_executable(${PROJECT_NAME}
-    main.c
-    options.c)
+    main.cpp)
 target_link_libraries(${PROJECT_NAME}
     ${PROJECT_NAME}_skel
     symdb
