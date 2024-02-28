@@ -16,7 +16,6 @@ ExternalProject_Add(libbpf
     install install_uapi_headers
   BUILD_IN_SOURCE TRUE
   INSTALL_COMMAND ""
-  STEP_TARGETS build
 )
 
 ExternalProject_Add(bpftool
@@ -27,19 +26,16 @@ ExternalProject_Add(bpftool
     OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/bpftool/
   BUILD_IN_SOURCE TRUE
   INSTALL_COMMAND ""
-  STEP_TARGETS build
 )
 
 ExternalProject_Add(spdlog
   PREFIX spdlog
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/spdlog
-  CONFIGURE_COMMAND cmake -Bbuild
+  CONFIGURE_COMMAND cmake -S${CMAKE_CURRENT_SOURCE_DIR}/spdlog -Bbuild
     -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/spdlog
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
   BUILD_COMMAND cmake --build build
-  BUILD_IN_SOURCE TRUE
   INSTALL_COMMAND cmake --install build
-  STEP_TARGETS build
 )
 
 ExternalProject_Add(libpcap
@@ -49,8 +45,7 @@ ExternalProject_Add(libpcap
     --prefix=${CMAKE_CURRENT_BINARY_DIR}/libpcap
     --host=${CROSS_COMPILE}
     --enable-shared=no
-  BUILD_COMMAND make install
+  BUILD_COMMAND make clean install
   BUILD_IN_SOURCE TRUE
   INSTALL_COMMAND ""
-  STEP_TARGETS build
 )

@@ -5,34 +5,6 @@
 #  LIBPCAP_LIBRARIES    - List of libraries when using pcap
 #  LIBPCAP_FOUND        - True if pcap found.
 
-find_path(LIBPCAP_INCLUDE_DIRS
-  NAMES
-    pcap/pcap.h
-  PATHS
-    /usr/include
-    /usr/local/include
-    /opt/local/include
-    /sw/include
-    ENV CPATH
-)
-
-find_library(LIBPCAP_LIBRARIES
-  NAMES
-    pcap
-  PATHS
-    /usr/lib
-    /usr/lib64
-    /usr/local/lib
-    /opt/local/lib
-    /sw/lib
-    ENV LIBRARY_PATH
-    ENV LD_LIBRARY_PATH
-)
-
-include (FindPackageHandleStandardArgs)
-# handle the QUIETLY and REQUIRED arguments and set LIBPCAP_FOUND to TRUE if all listed variables are TRUE
-find_package_handle_standard_args(LibPcap "Please install the libcap development package"
-  LIBPCAP_LIBRARIES
-  LIBPCAP_INCLUDE_DIRS)
-
-mark_as_advanced(LIBPCAP_INCLUDE_DIRS LIBPCAP_LIBRARIES)
+set(LIBPCAP_INCLUDE_DIRS "${PROJECT_BINARY_DIR}/3rdparty/libpcap/include")
+set(LIBPCAP_LIBRARIES "${PROJECT_BINARY_DIR}/3rdparty/libpcap/lib/libpcap.a")
+set(LIBPCAP_FOUND TRUE)

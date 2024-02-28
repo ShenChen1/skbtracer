@@ -158,7 +158,6 @@ macro(bpf_object name input)
   set(BPF_C_FILE ${CMAKE_CURRENT_SOURCE_DIR}/${input})
   set(BPF_O_FILE ${CMAKE_CURRENT_BINARY_DIR}/${name}.bpf.o)
   set(BPF_SKEL_FILE ${CMAKE_CURRENT_BINARY_DIR}/${name}.skel.h)
-  set(OUTPUT_TARGET ${name}_skel)
 
   # Build BPF object file
   add_custom_command(OUTPUT ${BPF_O_FILE}
@@ -176,11 +175,4 @@ macro(bpf_object name input)
     VERBATIM
     DEPENDS ${BPF_O_FILE}
     COMMENT "[skel]  Building BPF skeleton: ${name}")
-  add_custom_target(${OUTPUT_TARGET}-build DEPENDS ${BPF_SKEL_FILE})
-
-  add_library(${OUTPUT_TARGET} INTERFACE)
-  target_include_directories(${OUTPUT_TARGET} INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
-  target_include_directories(${OUTPUT_TARGET} SYSTEM INTERFACE ${LIBBPF_INCLUDE_DIRS})
-  target_link_libraries(${OUTPUT_TARGET} INTERFACE ${LIBBPF_LIBRARIES} -lelf -lz)
-  add_dependencies(${OUTPUT_TARGET} ${OUTPUT_TARGET}-build)
 endmacro()

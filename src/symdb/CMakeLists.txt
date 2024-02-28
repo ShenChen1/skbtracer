@@ -7,7 +7,7 @@ add_library(${PROJECT_NAME} OBJECT
 
 target_include_directories(${PROJECT_NAME}
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/)
+    PRIVATE ${LIBBPF_INCLUDE_DIRS})
 
 target_link_libraries(${PROJECT_NAME}
-    utils)
+    ${LIBBPF_LIBRARIES})

@@ -1,7 +1,8 @@
 find_package(LibElf REQUIRED)
+find_package(LibZ REQUIRED)
 find_package(LibBpf REQUIRED)
 find_package(LibPcap REQUIRED)
-#find_package(spdlog REQUIRED)
+find_package(Spdlog REQUIRED)
 
 add_compile_options(-Wall -Werror -g)
 add_subdirectory(app)
