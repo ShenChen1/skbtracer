@@ -2,40 +2,23 @@
 #define __SYMDB_MGR_H__
 
 #include <string>
+#include <vector>
 
 class SymdbMgr {
-public:
+  public:
     SymdbMgr();
+    ~SymdbMgr();
 
-    const std::string get_func_by_addr(unsigned long addr);
+    int init();
 
-};
+    std::pair<int, std::string> get_func_by_addr(const unsigned long addr) const;
+    std::pair<int, unsigned long> get_addr_by_func(const std::string &func) const;
 
+    std::pair<int, std::vector<std::string>> get_skb_func_list(void) const;
+    std::pair<int, int> get_skb_func_param_pos(const std::string &func) const;
 
-
-
-
-
-
-
-
-
-
-
-#include <stddef.h>
-
-typedef struct symdb_mgr {
+  private:
     void *priv;
-    int (*destroy)(struct symdb_mgr *self);
-
-    const char *(*get_func_by_addr)(struct symdb_mgr *self, unsigned long addr);
-    unsigned long (*get_addr_by_func)(struct symdb_mgr *self, const char *func);
-
-    int (*get_skb_func_list)(struct symdb_mgr *self, const char ***list, size_t *size);
-    int (*get_skb_func_param_pos)(struct symdb_mgr *self, const char *func, int *pos);
-
-} symdb_mgr_t;
-
-symdb_mgr_t *createSymdbMgr();
+};
 
 #endif //__SYMDB_MGR_H__
