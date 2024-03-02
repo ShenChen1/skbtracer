@@ -1,14 +1,11 @@
 project(symdb)
 
-add_library(${PROJECT_NAME} OBJECT
-    symdb.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/trace_helpers.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/trace_helpers.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/uprobe_helpers.c)
+add_library(${PROJECT_NAME} STATIC
+    symdb.cpp)
 
 target_include_directories(${PROJECT_NAME}
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/)
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(${PROJECT_NAME}
+    bpf
     utils)

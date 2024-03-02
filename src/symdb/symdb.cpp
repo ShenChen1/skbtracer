@@ -5,19 +5,7 @@
 #include <regex>
 #include <spdlog/spdlog.h>
 
-namespace bpfhelper {
-extern "C" {
-#include "trace_helpers.h"
-}
-} // namespace bpfhelper
-
-namespace libbpf {
-extern "C" {
-#include <bpf/bpf.h>
-#include <bpf/btf.h>
-#include <bpf/libbpf.h>
-}
-} // namespace libbpf
+#include "bpf-common.h"
 
 typedef struct {
     std::string func_name;

@@ -4,6 +4,8 @@ find_package(LibBpf REQUIRED)
 find_package(LibPcap REQUIRED)
 find_package(Spdlog REQUIRED)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED)
 add_compile_options(-Wall -Werror -g)
 add_subdirectory(app)
 add_subdirectory(bpf)

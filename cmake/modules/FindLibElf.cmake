@@ -13,10 +13,6 @@
 #  For details see the accompanying COPYING-CMAKE-SCRIPTS file.
 #
 
-if(LIBELF_LIBRARIES AND LIBELF_INCLUDE_DIRS)
-  set(LibElf_FIND_QUIETLY TRUE)
-endif(LIBELF_LIBRARIES AND LIBELF_INCLUDE_DIRS)
-
 find_path(LIBELF_INCLUDE_DIRS
   NAMES
     libelf.h
