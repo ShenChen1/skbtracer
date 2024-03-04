@@ -213,7 +213,7 @@ std::pair<int, unsigned long> SymdbMgr::get_addr_by_func(const std::string &func
     return { 0, sym->addr };
 }
 
-std::pair<int, std::vector<std::string>> SymdbMgr::get_skb_func_list(void) const
+std::pair<int, std::vector<std::string>> SymdbMgr::get_skb_func_list(const std::string &filter) const
 {
     auto p = static_cast<symdb_mgr_priv_t *>(priv);
     std::vector<std::string> list = {};

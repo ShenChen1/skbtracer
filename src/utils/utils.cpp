@@ -4,7 +4,7 @@ extern "C" {
 #include <sys/resource.h>
 }
 
-void utils::enforce_infinite_rlimit()
+void Utils::enforce_infinite_rlimit()
 {
     struct rlimit rl = {};
     rl.rlim_max = RLIM_INFINITY;
