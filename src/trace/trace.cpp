@@ -1,10 +1,13 @@
 #include "trace.h"
+#include <cstdint>
 #include <map>
 #include <regex>
+#include <poll.h>
 #include <spdlog/spdlog.h>
 
 namespace libbpf {
 extern "C" {
+#include "skbtracer.h"
 #include "skbtracer.skel.h"
 }
 } /* namespace libbpf */
@@ -13,6 +16,8 @@ typedef struct {
     std::map<int, libbpf::bpf_program *> prog_mapping_list;
     std::map<std::string, libbpf::bpf_link *> link_mapping_list;
     libbpf::skbtracer_bpf *skel;
+    TraceMgr::output_callback_t output_cb;
+    void *ctx;
 } trace_mgr_priv_t;
 
 TraceMgr::TraceMgr()
@@ -93,5 +98,50 @@ int TraceMgr::detach_skb_func(const std::string &skb_func)
         return err;
     }
     p->link_mapping_list.erase(iter);
+    return 0;
+}
+
+int TraceMgr::register_output_callback(TraceMgr::output_callback_t cb, void *ctx)
+{
+    auto p = static_cast<trace_mgr_priv_t *>(priv);
+    p->output_cb = cb;
+    p->ctx = ctx;
+    return 0;
+}
+
+int TraceMgr::run()
+{
+    auto p = static_cast<trace_mgr_priv_t *>(priv);
+    int map_fd = bpf_map__fd(p->skel->maps.events);
+    if (map_fd < 0) {
+        spdlog::error("Failed to get events map fd");
+        return -EFAULT;
+    }
+
+    while (1) {
+        struct pollfd fd = {
+            .fd = map_fd,
+            .events = POLLIN,
+        };
+        int ret = poll(&fd, 1, -1);
+        if (ret < 0) {
+            spdlog::error("Failed to poll events: %d", errno);
+            break;
+        }
+
+        libbpf::event_t event = {};
+        int err = bpf_map__lookup_and_delete_elem(p->skel->maps.events, NULL, 0, &event, sizeof(event), 0);
+        if (err) {
+            if (errno == ENOENT)
+                continue;
+            spdlog::error("Failed to lookup elem: %d", errno);
+            break;
+        }
+
+        if (p->output_cb) {
+            p->output_cb(p->ctx, &event, sizeof(event));
+        }
+    }
+
     return 0;
 }

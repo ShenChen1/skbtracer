@@ -17,6 +17,10 @@ class TraceMgr {
     int attach_skb_func(const std::string &skb_func, int skb_param_pos);
     int detach_skb_func(const std::string &skb_func);
 
+    using output_callback_t = void (*)(void *ctx, const void *data, size_t len);
+    int register_output_callback(output_callback_t cb, void *ctx);
+    int run();
+
   private:
     TraceMgr();
     ~TraceMgr();

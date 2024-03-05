@@ -70,8 +70,8 @@ static int get_func_param_pos(libbpf::btf *btf, const char *func, const char *pa
     }
 
     // Print the function parameters
-    for (i = 0; i < btf_vlen(t_func_proto); i++) {
-        p = btf_params(t_func_proto) + i;
+    for (i = 0; i < libbpf::btf_vlen(t_func_proto); i++) {
+        p = libbpf::btf_params(t_func_proto) + i;
         t = libbpf::btf__type_by_id(btf, p->type);
         if (!t || !btf_is_ptr(t)) {
             continue;

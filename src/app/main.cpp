@@ -3,10 +3,8 @@
 #include "trace.h"
 #include "utils.h"
 
-#include <cstdint>
 #include <regex>
 #include <spdlog/spdlog.h>
-#include "skbtracer.h"
 
 int main(int argc, char **argv)
 {
@@ -50,5 +48,6 @@ int main(int argc, char **argv)
         }
     }
 
-    return 0;
+    //trace.register_output_callback();
+    return trace.run();
 }
