@@ -1,10 +1,11 @@
+#include <regex>
+#include <spdlog/spdlog.h>
+
 #include "options.h"
+#include "output.h"
 #include "symdb.h"
 #include "trace.h"
 #include "utils.h"
-
-#include <regex>
-#include <spdlog/spdlog.h>
 
 int main(int argc, char **argv)
 {
@@ -48,6 +49,10 @@ int main(int argc, char **argv)
         }
     }
 
-    //trace.register_output_callback();
+    auto cb = [](void *ctx, const void *data, size_t len) {
+        
+    };
+
+    trace.register_output_callback(cb, nullptr);
     return trace.run();
 }

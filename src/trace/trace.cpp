@@ -1,16 +1,18 @@
 #include "trace.h"
-#include <cstdint>
+
 #include <map>
-#include <regex>
 #include <poll.h>
+#include <regex>
 #include <spdlog/spdlog.h>
 
-namespace libbpf {
-extern "C" {
+#include "bpf-common.h"
 #include "skbtracer.h"
+
+extern "C" {
+namespace libbpf {
 #include "skbtracer.skel.h"
+} // namespace libbpf
 }
-} /* namespace libbpf */
 
 typedef struct {
     std::map<int, libbpf::bpf_program *> prog_mapping_list;
@@ -22,7 +24,11 @@ typedef struct {
 
 TraceMgr::TraceMgr()
 {
-    auto libbpf_print_fn = [](libbpf::libbpf_print_level level, const char *format, va_list args) { return vfprintf(stderr, format, args); };
+    auto libbpf_print_fn = [](
+        libbpf::libbpf_print_level level,
+        const char *format, va_list args) {
+            return vfprintf(stderr, format, args);
+        };
 
     libbpf::libbpf_set_print(libbpf_print_fn);
     libbpf::libbpf_set_strict_mode(libbpf::LIBBPF_STRICT_ALL);
@@ -129,7 +135,7 @@ int TraceMgr::run()
             break;
         }
 
-        libbpf::event_t event = {};
+        skb_event event = {};
         int err = bpf_map__lookup_and_delete_elem(p->skel->maps.events, NULL, 0, &event, sizeof(event), 0);
         if (err) {
             if (errno == ENOENT)

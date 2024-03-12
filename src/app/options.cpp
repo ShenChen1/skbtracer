@@ -1,4 +1,5 @@
 #include "options.h"
+
 #include <getopt.h>
 
 static void usage()

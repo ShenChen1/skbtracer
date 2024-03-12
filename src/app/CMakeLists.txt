@@ -3,6 +3,7 @@ add_executable(${PROJECT_NAME}
     options.cpp)
 target_link_libraries(${PROJECT_NAME}
     bpf
+    output
     symdb
     trace
     utils)
