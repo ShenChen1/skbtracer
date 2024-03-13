@@ -47,49 +47,7 @@ SymdbMgr::~SymdbMgr()
     delete p;
 }
 
-static int get_func_param_pos(libbpf::btf *btf, const char *func, const char *param)
-{
-    const libbpf::btf_type *t_func, *t_func_proto, *t;
-    const libbpf::btf_param *p;
-    int id, i;
-
-    // Find the BTF ID of the function
-    id = libbpf::btf__find_by_name_kind(btf, func, BTF_KIND_FUNC);
-    if (id < 0) {
-        return -ENOENT;
-    }
-
-    t_func = libbpf::btf__type_by_id(btf, id);
-    if (!t_func || !libbpf::btf_is_func(t_func)) {
-        spdlog::error("Error looking up function type: {}", func);
-        return -ENOENT;
-    }
-    t_func_proto = libbpf::btf__type_by_id(btf, t_func->type);
-    if (!t_func_proto || !libbpf::btf_is_func_proto(t_func_proto)) {
-        spdlog::error("Error looking up function proto type: {}", func);
-        return -ENOENT;
-    }
-
-    // Print the function parameters
-    for (i = 0; i < libbpf::btf_vlen(t_func_proto); i++) {
-        p = libbpf::btf_params(t_func_proto) + i;
-        t = libbpf::btf__type_by_id(btf, p->type);
-        if (!t || !btf_is_ptr(t)) {
-            continue;
-        }
-        t = libbpf::btf__type_by_id(btf, t->type);
-        if (!t || !btf_is_struct(t)) {
-            continue;
-        }
-        if (!strcmp(libbpf::btf__name_by_offset(btf, t->name_off), param)) {
-            return i;
-        }
-    }
-
-    return -ENOENT;
-}
-
-static int iterate_kernel_module(symdb_mgr_priv_t *priv)
+static int load_all_kmod_btfs(symdb_mgr_priv_t *priv)
 {
     auto process_module = [&](const char *module) {
         if (!bpfhelper::module_btf_exists(module)) {
@@ -129,26 +87,12 @@ static int iterate_kernel_module(symdb_mgr_priv_t *priv)
     return 0;
 }
 
-static int iterate_available_functions(symdb_mgr_priv_t *priv)
+static std::map<std::string, bool> get_avail_funcs()
 {
-    auto process_function = [&](const std::string module, const std::string func) {
-        const std::string param = "sk_buff";
-        skb_func_t s = {};
-        s.func_name = func;
-        s.mod_name = module;
-        s.skb_pos = get_func_param_pos(priv->btf_list[module], func.c_str(), param.c_str());
-        if (s.skb_pos < 0) {
-            return;
-        }
-        priv->skb_func_list[func] = s;
-        spdlog::debug("Found param '{}' in {} at postion {}", param, func, s.skb_pos);
-    };
-
-    const std::string availfuncs = "/sys/kernel/debug/tracing/available_filter_functions";
-    std::ifstream file(availfuncs);
+    std::map<std::string, bool> kprobe_funcs;
+    std::ifstream file("/sys/kernel/debug/tracing/available_filter_functions");
     if (!file.is_open()) {
-        spdlog::error("Failed to open {}", availfuncs);
-        return -errno;
+        return kprobe_funcs;
     }
 
     std::string line;
@@ -156,16 +100,74 @@ static int iterate_available_functions(symdb_mgr_priv_t *priv)
     while (std::getline(file, line)) {
         std::smatch match;
         std::string func = line;
-        std::string mod = "vmlinux";
         if (std::regex_search(line, match, regex)) {
             func = match.prefix().str();
             func.pop_back();
-            mod = match[1].str();
         }
-        process_function(mod, func);
+
+        kprobe_funcs[func] = true;
     }
 
     file.close();
+    return kprobe_funcs;
+}
+
+static int get_func_param_pos(libbpf::btf *btf, const int btf_id, const char *param)
+{
+    const libbpf::btf_type *t_func_proto, *t;
+    const libbpf::btf_param *p;
+
+    t_func_proto = libbpf::btf__type_by_id(btf, btf_id);
+    if (!t_func_proto || !libbpf::btf_is_func_proto(t_func_proto)) {
+        return -ENOENT;
+    }
+
+    for (size_t i = 0; i < libbpf::btf_vlen(t_func_proto); i++) {
+        p = libbpf::btf_params(t_func_proto) + i;
+        t = libbpf::btf__type_by_id(btf, p->type);
+        if (!t || !btf_is_ptr(t)) {
+            continue;
+        }
+        t = libbpf::btf__type_by_id(btf, t->type);
+        if (!t || !btf_is_struct(t)) {
+            continue;
+        }
+        if (!std::strcmp(libbpf::btf__name_by_offset(btf, t->name_off), param)) {
+            return i;
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int get_skb_func_from_btfs(symdb_mgr_priv_t *priv)
+{
+    auto funcs = get_avail_funcs();
+    for (auto &it : priv->btf_list) {
+        const auto mod_name = it.first;
+        const auto btf = it.second;
+        for (size_t id = 1; id < libbpf::btf__type_cnt(btf); id++) {
+            const libbpf::btf_type *t = libbpf::btf__type_by_id(btf, id);
+            if (!t || !libbpf::btf_is_func(t)) {
+                continue;
+            }
+
+            const auto func_name = libbpf::btf__name_by_offset(btf, t->name_off);
+            if (funcs.find(func_name) == funcs.end()) {
+                continue;
+            }
+
+            int skb_pos = get_func_param_pos(btf, t->type, "sk_buff");
+            if (skb_pos < 0) {
+                continue;
+            }
+
+            skb_func_t skb_func = { func_name, mod_name, skb_pos };
+            priv->skb_func_list[func_name] = skb_func;
+            spdlog::debug("Found skb func {} with {} in mod {}", func_name, skb_pos, mod_name);
+        }
+    }
+
     return 0;
 }
 
@@ -187,8 +189,8 @@ int SymdbMgr::init()
         return -EFAULT;
     }
 
-    iterate_kernel_module(p);
-    iterate_available_functions(p);
+    load_all_kmod_btfs(p);
+    get_skb_func_from_btfs(p);
     return 0;
 }
 
@@ -219,6 +221,9 @@ std::pair<int, std::vector<std::string>> SymdbMgr::get_skb_func_list(const std::
     auto p = static_cast<symdb_mgr_priv_t *>(priv);
     std::vector<std::string> list = {};
     for (auto &it : p->skb_func_list) {
+        if (!filter.empty() && !std::regex_match(it.first, std::regex(filter))) {
+            continue;
+        }
         list.push_back(it.first);
     }
 
