@@ -38,7 +38,8 @@ static __always_inline bool filter_meta(struct sk_buff *skb)
     return true;
 }
 
-static __noinline bool filter_pcap_ebpf_l3(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
+SEC("pcap_ebpf_l3")
+bool filter_pcap_ebpf_l3(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
 {
     return data != data_end && _skb == __skb && __skb == ___skb;
 }
@@ -51,7 +52,8 @@ static __always_inline bool filter_pcap_l3(struct sk_buff *skb)
     return filter_pcap_ebpf_l3((void *)skb, (void *)skb, (void *)skb, data, data_end);
 }
 
-static __noinline bool filter_pcap_ebpf_l2(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
+SEC("pcap_ebpf_l2")
+bool filter_pcap_ebpf_l2(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
 {
     return data != data_end && _skb == __skb && __skb == ___skb;
 }

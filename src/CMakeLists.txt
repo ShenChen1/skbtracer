@@ -6,7 +6,7 @@ find_package(Spdlog REQUIRED)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED)
-add_compile_options(-Wall -Werror -g)
+add_compile_options(-Wall -Werror -g -O3)
 add_subdirectory(app)
 add_subdirectory(bpf)
 add_subdirectory(output)

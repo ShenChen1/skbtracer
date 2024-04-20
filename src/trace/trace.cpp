@@ -33,11 +33,27 @@ TraceMgr::TraceMgr()
     libbpf::libbpf_set_print(libbpf_print_fn);
     libbpf::libbpf_set_strict_mode(libbpf::LIBBPF_STRICT_ALL);
 
-    auto skel = libbpf::skbtracer_bpf__open_and_load();
+    auto skel = libbpf::skbtracer_bpf__open();
     if (libbpf::libbpf_get_error(skel)) {
-        spdlog::error("Failed to open and load BPF skeleton");
+        spdlog::error("Failed to open BPF skeleton");
         return;
     }
+
+    auto insns = libbpf::bpf_program__insns(skel->progs.filter_pcap_ebpf_l3);
+    if (!insns) {
+        spdlog::error("Failed to get filter_pcap_ebpf_l3 insns");
+        return;
+    }
+
+    libbpf::bpf_insn filter_pcap_ebpf_l3_insns = {};
+    filter_pcap_ebpf_l3_insns.code = BPF_ALU64 | BPF_MOV | BPF_X;
+    filter_pcap_ebpf_l3_insns.dst_reg = BPF_REG_4;
+    filter_pcap_ebpf_l3_insns.src_reg = BPF_REG_5;
+    filter_pcap_ebpf_l3_insns.off = 0;
+    filter_pcap_ebpf_l3_insns.imm = 0;
+
+    libbpf::bpf_program__set_insns(skel->progs.filter_pcap_ebpf_l3, &filter_pcap_ebpf_l3_insns, 1);
+    libbpf::skbtracer_bpf__load(skel);
 
     auto p = new trace_mgr_priv_t();
     p->prog_mapping_list.emplace(0, skel->progs.kprobe_skb_1);
