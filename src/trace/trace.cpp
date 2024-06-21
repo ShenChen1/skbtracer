@@ -45,14 +45,8 @@ TraceMgr::TraceMgr()
         return;
     }
 
-    libbpf::bpf_insn filter_pcap_ebpf_l3_insns = {};
-    filter_pcap_ebpf_l3_insns.code = BPF_ALU64 | BPF_MOV | BPF_X;
-    filter_pcap_ebpf_l3_insns.dst_reg = BPF_REG_4;
-    filter_pcap_ebpf_l3_insns.src_reg = BPF_REG_5;
-    filter_pcap_ebpf_l3_insns.off = 0;
-    filter_pcap_ebpf_l3_insns.imm = 0;
-
-    libbpf::bpf_program__set_insns(skel->progs.filter_pcap_ebpf_l3, &filter_pcap_ebpf_l3_insns, 1);
+    auto [ret, new_insns, new_len] = bpfhelper::compile_ebpf_filter("port 123", true);
+    libbpf::bpf_program__set_insns(skel->progs.filter_pcap_ebpf_l3, new_insns, new_len);
     libbpf::skbtracer_bpf__load(skel);
 
     auto p = new trace_mgr_priv_t();
