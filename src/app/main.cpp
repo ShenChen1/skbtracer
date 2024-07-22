@@ -12,6 +12,9 @@ int main(int argc, char **argv)
     int err;
 
     auto args = Options::parse_args(argc, argv);
+    if (args.verbose) {
+        Options::dump_args(args);
+    }
     spdlog::set_level(args.verbose ? spdlog::level::debug : spdlog::level::info);
     Utils::enforce_infinite_rlimit();
 
@@ -23,9 +26,16 @@ int main(int argc, char **argv)
     }
 
     TraceMgr &trace = TraceMgr::getInstance();
-    err = trace.init();
+    err = trace.init(args);
     if (err) {
         spdlog::error("Failed to initialize TraceMgr");
+        return err;
+    }
+
+    Output output = Output();
+    err = output.init(args);
+    if (err) {
+        spdlog::error("Failed to initialize Output");
         return err;
     }
 
@@ -42,6 +52,7 @@ int main(int argc, char **argv)
             continue;
         }
 
+        spdlog::debug("Attaching skb function: {} with pos {}", func, skb_param_pos);
         err = trace.attach_skb_func(func, skb_param_pos);
         if (err) {
             spdlog::warn("Failed to attach skb function: {}", func);
@@ -50,9 +61,18 @@ int main(int argc, char **argv)
     }
 
     auto cb = [](void *ctx, const void *data, size_t len) {
-        
+        Output *output = static_cast<Output*>(ctx);
+        static bool init = false;
+        if (!init) {
+            output->print_header();
+            init = true;
+        }
+
+        skb_event event = {};
+        std::memcpy(&event, data, sizeof(skb_event));
+        output->print_entry(event);
     };
 
-    trace.register_output_callback(cb, nullptr);
+    trace.register_output_callback(cb, &output);
     return trace.run();
 }

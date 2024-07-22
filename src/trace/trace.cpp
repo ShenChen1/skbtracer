@@ -1,11 +1,13 @@
 #include "trace.h"
 
-#include <map>
+#include <elf.h>
 #include <poll.h>
+
+#include <map>
 #include <regex>
 #include <spdlog/spdlog.h>
 
-#include "bpf-common.h"
+#include "pcap2bpf.h"
 #include "skbtracer.h"
 
 extern "C" {
@@ -39,16 +41,6 @@ TraceMgr::TraceMgr()
         return;
     }
 
-    auto insns = libbpf::bpf_program__insns(skel->progs.filter_pcap_ebpf_l3);
-    if (!insns) {
-        spdlog::error("Failed to get filter_pcap_ebpf_l3 insns");
-        return;
-    }
-
-    auto [ret, new_insns, new_len] = bpfhelper::compile_ebpf_filter("port 123", true);
-    libbpf::bpf_program__set_insns(skel->progs.filter_pcap_ebpf_l3, new_insns, new_len);
-    libbpf::skbtracer_bpf__load(skel);
-
     auto p = new trace_mgr_priv_t();
     p->prog_mapping_list.emplace(0, skel->progs.kprobe_skb_1);
     p->prog_mapping_list.emplace(1, skel->progs.kprobe_skb_2);
@@ -68,9 +60,27 @@ TraceMgr::~TraceMgr()
     delete p;
 }
 
-int TraceMgr::init()
+int TraceMgr::init(const Options::args &args)
 {
     auto p = static_cast<trace_mgr_priv_t *>(priv);
+    /* pass cfg */
+    p->skel->rodata->cfg.output_skb = args.output_skb;
+    p->skel->rodata->cfg.output_stack = args.output_stack;
+
+    /* modify ebpf code */
+    pcap2bpf::compile_ebpf_filter(args.filter_pcap, true);
+
+
+    /* disable section */
+    libbpf::bpf_program__set_autoattach(p->skel->progs.filter_pcap_ebpf_l3, false);
+    libbpf::bpf_program__set_autoattach(p->skel->progs.filter_pcap_ebpf_l2, false);
+    libbpf::bpf_program__set_autoload(p->skel->progs.filter_pcap_ebpf_l3, false);
+    libbpf::bpf_program__set_autoload(p->skel->progs.filter_pcap_ebpf_l2, false);
+
+
+
+    libbpf::skbtracer_bpf__load(p->skel);
+
     for (const auto &prog : p->prog_mapping_list) {
         libbpf::bpf_program__set_autoattach(prog.second, false);
     }

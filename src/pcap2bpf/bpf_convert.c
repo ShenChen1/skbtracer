@@ -221,6 +221,33 @@
 		.off   = 0,					\
 		.imm   = 0 })
 
+static bool convert_bpf_extensions(struct sock_filter *fp,
+				   struct bpf_insn **insnp)
+{
+	switch (fp->k) {
+	case SKF_AD_OFF + SKF_AD_PROTOCOL:
+	case SKF_AD_OFF + SKF_AD_PKTTYPE:
+	case SKF_AD_OFF + SKF_AD_IFINDEX:
+	case SKF_AD_OFF + SKF_AD_HATYPE:
+	case SKF_AD_OFF + SKF_AD_MARK:
+	case SKF_AD_OFF + SKF_AD_RXHASH:
+	case SKF_AD_OFF + SKF_AD_QUEUE:
+	case SKF_AD_OFF + SKF_AD_VLAN_TAG:
+	case SKF_AD_OFF + SKF_AD_VLAN_TAG_PRESENT:
+	case SKF_AD_OFF + SKF_AD_VLAN_TPID:
+	case SKF_AD_OFF + SKF_AD_PAY_OFFSET:
+	case SKF_AD_OFF + SKF_AD_NLATTR:
+	case SKF_AD_OFF + SKF_AD_NLATTR_NEST:
+	case SKF_AD_OFF + SKF_AD_CPU:
+	case SKF_AD_OFF + SKF_AD_RANDOM:
+	case SKF_AD_OFF + SKF_AD_ALU_XOR_X:
+		return true;
+
+	default:
+		return false;
+	}
+}
+
 int bpf_convert_filter(struct sock_filter *prog, int len,
 		       struct bpf_insn *new_prog, int *new_len)
 {
@@ -297,6 +324,15 @@ do_pass:
 		case BPF_LD | BPF_IND | BPF_W:
 		case BPF_LD | BPF_IND | BPF_H:
 		case BPF_LD | BPF_IND | BPF_B:
+			/* Check for overloaded BPF extension and
+			 * directly convert it if found, otherwise
+			 * just move on with mapping.
+			 */
+			if (BPF_CLASS(fp->code) == BPF_LD &&
+			    BPF_MODE(fp->code) == BPF_ABS &&
+			    convert_bpf_extensions(fp, &insn))
+				break;
+
 			if (fp->code == (BPF_ALU | BPF_DIV | BPF_X) ||
 			    fp->code == (BPF_ALU | BPF_MOD | BPF_X)) {
 				*insn++ = BPF_MOV32_REG(BPF_REG_X, BPF_REG_X);
@@ -501,7 +537,7 @@ jmp_rest:
 	}
 
 	free(addrs);
-	assert(*new_len != new_flen);
+	assert(*new_len == new_flen);
 	return 0;
 err:
 	free(addrs);

@@ -11,8 +11,6 @@ target_include_directories(skbtracer_skel
     PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
 add_library(${PROJECT_NAME} STATIC
-    bpf_compile.cpp
-    bpf_convert.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/trace_helpers.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/uprobe_helpers.c)
 target_include_directories(${PROJECT_NAME}

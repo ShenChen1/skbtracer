@@ -7,6 +7,7 @@ namespace Options {
 
 typedef struct {
     std::string filter_func;
+    std::string filter_mark;
     std::string filter_pcap;
 
     bool output_skb;
@@ -16,6 +17,7 @@ typedef struct {
 } args;
 
 const args parse_args(int argc, char **argv);
+int dump_args(const args &args);
 
 }
 

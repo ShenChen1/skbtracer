@@ -1,7 +1,7 @@
 #ifndef __TRACE_MGR_H__
 #define __TRACE_MGR_H__
 
-#include <string>
+#include "options.h"
 
 class TraceMgr {
   public:
@@ -13,7 +13,7 @@ class TraceMgr {
     TraceMgr(const TraceMgr &) = delete;
     TraceMgr &operator=(const TraceMgr &) = delete;
 
-    int init();
+    int init(const Options::args &args);
     int attach_skb_func(const std::string &skb_func, int skb_param_pos);
     int detach_skb_func(const std::string &skb_func);
 

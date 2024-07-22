@@ -1,6 +1,9 @@
 #ifndef __OUTPUT_H__
 #define __OUTPUT_H__
 
+
+#include "options.h"
+
 extern "C" {
 #include <linux/types.h>
 #include "skbtracer.h"
@@ -11,7 +14,7 @@ class Output {
     Output();
     ~Output();
 
-    int init();
+    int init(const Options::args &args);
     int print_header();
     int print_entry(const skb_event &event);
 

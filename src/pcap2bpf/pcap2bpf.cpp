@@ -2,7 +2,12 @@
 #include <vector>
 #include <spdlog/spdlog.h>
 
-#include "bpf-common.h"
+extern "C" {
+#include <gelf.h>
+#include <libelf.h>
+}
+
+#include "pcap2bpf.h"
 
 namespace cbpf {
 extern "C" {
@@ -57,7 +62,7 @@ end:
     return { err, sf };
 }
 
-std::tuple<int, libbpf::bpf_insn *, size_t> bpfhelper::compile_ebpf_filter(const std::string &filter_str, bool l3)
+static std::tuple<int, libbpf::bpf_insn *, size_t> pcap2bpf::compile_ebpf_filter(const std::string &filter_str, bool l3)
 {
     int err = 0;
     libbpf::bpf_insn *ebpf = NULL;
@@ -76,7 +81,7 @@ std::tuple<int, libbpf::bpf_insn *, size_t> bpfhelper::compile_ebpf_filter(const
         goto end;
     }
 
-    spdlog::info("prog len cBPF=%u -> eBPF=%u", cbpf.len, ebpf_len);
+    spdlog::info("prog len cBPF={} -> eBPF={}", cbpf.len, ebpf_len);
     ebpf = new libbpf::bpf_insn[ebpf_len];
     if (!ebpf) {
         spdlog::error("failed to allocate memory for eBPF instructions");
@@ -94,4 +99,41 @@ std::tuple<int, libbpf::bpf_insn *, size_t> bpfhelper::compile_ebpf_filter(const
 end:
     delete[] cbpf.filter;
     return { err, ebpf, ebpf_len };
+}
+
+int pcap2bpf::inject_ebpf_filter(char *elf_data, size_t elf_size, libbpf::bpf_insn *prog, size_t len)
+{
+    if (elf_version(EV_CURRENT) == EV_NONE) {
+        spdlog::error("Failed to initialize libelf");
+        return -EINVAL;
+    }
+
+    Elf *elf = elf_memory(elf_data, elf_size);
+    if (elf == NULL) {
+        spdlog::error("Failed to open ELF file");
+        return -EFAULT;
+    }
+
+    Elf_Scn *scn = NULL;
+    GElf_Shdr shdr;
+    Elf_Data *data;
+
+    while ((scn = elf_nextscn(elf, scn)) != NULL) {
+        if (gelf_getshdr(scn, &shdr) != &shdr) {
+            continue;
+        }
+        if (shdr.sh_type == SHT_PROGBITS) {
+            char *name = elf_strptr(elf, elf_getshdrstrndx(elf, NULL), shdr.sh_name);
+            if (strcmp(name, "pcap_ebpf_l3") == 0) {
+                data = elf_getdata(scn, NULL);
+                if (data) {
+                    std::memcpy(data->d_buf, prog, len * sizeof(libbpf::bpf_insn));
+                }
+                break;
+            }
+        }
+    }
+
+    elf_end(elf);
+    return 0;
 }
