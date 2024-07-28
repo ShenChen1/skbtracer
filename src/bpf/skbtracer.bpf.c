@@ -24,7 +24,7 @@ struct {
 const static bool TRUE = true;
 const volatile struct skb_config cfg;
 
-static __noinline bool filter_meta(struct sk_buff *skb)
+static __always_inline bool filter_meta(struct sk_buff *skb)
 {
 /*  if (cfg.netns && get_netns(skb) != cfg.netns) {
         return false;
@@ -38,14 +38,15 @@ static __noinline bool filter_meta(struct sk_buff *skb)
     return true;
 }
 
-SEC("pcap_ebpf_l3")
-bool filter_pcap_ebpf_l3(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
+//SEC("?pcap_ebpf_l3")
+//bool filter_pcap_ebpf_l3(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
+static __noinline bool filter_pcap_ebpf_l3(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
 {
-    bpf_printk("filter_pcap_ebpf_l3:%p\n", _skb);
+    //bpf_printk("data:%p data_end:%p\n", data, data_end);
     return data != data_end && _skb == __skb && __skb == ___skb;
 }
 
-static __noinline bool filter_pcap_l3(struct sk_buff *skb)
+static __always_inline bool filter_pcap_l3(struct sk_buff *skb)
 {
     void *skb_head = BPF_CORE_READ(skb, head);
     void *data = skb_head + BPF_CORE_READ(skb, network_header);
@@ -53,14 +54,15 @@ static __noinline bool filter_pcap_l3(struct sk_buff *skb)
     return filter_pcap_ebpf_l3((void *)skb, (void *)skb, (void *)skb, data, data_end);
 }
 
-SEC("pcap_ebpf_l2")
-bool filter_pcap_ebpf_l2(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
+//SEC("?pcap_ebpf_l2")
+//bool filter_pcap_ebpf_l2(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
+static __noinline bool filter_pcap_ebpf_l2(void *_skb, void *__skb, void *___skb, void *data, void *data_end)
 {
-    bpf_printk("filter_pcap_ebpf_l2:%p\n", _skb);
+    //bpf_printk("data:%p data_end:%p\n", data, data_end);
     return data != data_end && _skb == __skb && __skb == ___skb;
 }
 
-static __noinline bool filter_pcap_l2(struct sk_buff *skb)
+static __always_inline bool filter_pcap_l2(struct sk_buff *skb)
 {
     void *skb_head = BPF_CORE_READ(skb, head);
     void *data = skb_head + BPF_CORE_READ(skb, mac_header);
@@ -68,19 +70,19 @@ static __noinline bool filter_pcap_l2(struct sk_buff *skb)
     return filter_pcap_ebpf_l2((void *)skb, (void *)skb, (void *)skb, data, data_end);
 }
 
-static __noinline bool filter_pcap(struct sk_buff *skb)
+static __always_inline bool filter_pcap(struct sk_buff *skb)
 {
     if (BPF_CORE_READ(skb, mac_len) == 0)
         return filter_pcap_l3(skb);
     return filter_pcap_l2(skb);
 }
 
-static __noinline bool filter(struct sk_buff *skb)
+static __always_inline bool filter(struct sk_buff *skb)
 {
     return filter_pcap(skb) && filter_meta(skb);
 }
 
-static __noinline void set_output(void *ctx, struct sk_buff *skb, struct skb_event *event)
+static __always_inline void set_output(void *ctx, struct sk_buff *skb, struct skb_event *event)
 {
     if (cfg.output_meta) {
         // set_meta(skb, &event->meta);
@@ -95,7 +97,7 @@ static __noinline void set_output(void *ctx, struct sk_buff *skb, struct skb_eve
     }
 }
 
-static __noinline int kprobe_skb(struct sk_buff *skb, struct pt_regs *ctx)
+static __always_inline int kprobe_skb(struct sk_buff *skb, struct pt_regs *ctx)
 {
     struct skb_event event = {};
 
@@ -137,7 +139,7 @@ int BPF_KPROBE(kfree_skbmem)
     return BPF_OK;
 }
 
-static __noinline int track_skb_clone(struct sk_buff *old, struct sk_buff *new)
+static __always_inline int track_skb_clone(struct sk_buff *old, struct sk_buff *new)
 {
 	u64 skb_addr_old = (u64)BPF_CORE_READ(old, head);
 	u64 skb_addr_new = (u64)BPF_CORE_READ(new, head);

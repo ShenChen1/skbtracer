@@ -3,6 +3,7 @@
 #include <elf.h>
 #include <poll.h>
 
+#include <fstream>
 #include <map>
 #include <regex>
 #include <spdlog/spdlog.h>
@@ -35,19 +36,7 @@ TraceMgr::TraceMgr()
     libbpf::libbpf_set_print(libbpf_print_fn);
     libbpf::libbpf_set_strict_mode(libbpf::LIBBPF_STRICT_ALL);
 
-    auto skel = libbpf::skbtracer_bpf__open();
-    if (libbpf::libbpf_get_error(skel)) {
-        spdlog::error("Failed to open BPF skeleton");
-        return;
-    }
-
     auto p = new trace_mgr_priv_t();
-    p->prog_mapping_list.emplace(0, skel->progs.kprobe_skb_1);
-    p->prog_mapping_list.emplace(1, skel->progs.kprobe_skb_2);
-    p->prog_mapping_list.emplace(2, skel->progs.kprobe_skb_3);
-    p->prog_mapping_list.emplace(3, skel->progs.kprobe_skb_4);
-    p->prog_mapping_list.emplace(4, skel->progs.kprobe_skb_5);
-    p->skel = skel;
     priv = static_cast<void *>(p);
 }
 
@@ -62,25 +51,55 @@ TraceMgr::~TraceMgr()
 
 int TraceMgr::init(const Options::args &args)
 {
+    const std::string object_name = "skbtracer.bpf.o";
     auto p = static_cast<trace_mgr_priv_t *>(priv);
+
+    size_t size = 0;
+    const void *data = libbpf::skbtracer_bpf__elf_bytes(&size);
+    std::ofstream outfile(object_name, std::ios::binary);
+    outfile.write(reinterpret_cast<const char*>(data), size);
+    outfile.close();
+
+
+    if (0) {
+        /* modify ebpf code */
+        auto [ret_l3, insn_l3, len_l3] = pcap2bpf::compile_ebpf_filter(args.filter_pcap, true);
+        pcap2bpf::inject_ebpf_filter(object_name, "filter_pcap_ebpf_l3", insn_l3, len_l3);
+        auto [ret_l2, insn_l2, len_l2] = pcap2bpf::compile_ebpf_filter(args.filter_pcap, false);
+        pcap2bpf::inject_ebpf_filter(object_name, "filter_pcap_ebpf_l2", insn_l2, len_l2);
+    } else {
+        libbpf::bpf_insn filter_pcap_ebpf_insns = {};
+        filter_pcap_ebpf_insns.code = BPF_ALU64 | BPF_MOV | BPF_X;
+        filter_pcap_ebpf_insns.dst_reg = libbpf::BPF_REG_4;
+        filter_pcap_ebpf_insns.src_reg = libbpf::BPF_REG_5;
+        filter_pcap_ebpf_insns.off = 0;
+        filter_pcap_ebpf_insns.imm = 0;
+        pcap2bpf::inject_ebpf_filter(object_name, "filter_pcap_ebpf_l3", &filter_pcap_ebpf_insns, 1);
+        pcap2bpf::inject_ebpf_filter(object_name, "filter_pcap_ebpf_l2", &filter_pcap_ebpf_insns, 1);
+    }
+
+    std::ifstream infile(object_name, std::ios::binary);
+    std::vector<char> new_data((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+    infile.close();
+
+    libbpf::skbtracer_bpf *skel = new libbpf::skbtracer_bpf();
+    libbpf::skbtracer_bpf__create_skeleton(skel);
+    skel->skeleton->data = new_data.data();
+    skel->skeleton->data_sz = new_data.size();
+    bpf_object__open_skeleton(skel->skeleton, NULL);
+
+    p->prog_mapping_list.emplace(0, skel->progs.kprobe_skb_1);
+    p->prog_mapping_list.emplace(1, skel->progs.kprobe_skb_2);
+    p->prog_mapping_list.emplace(2, skel->progs.kprobe_skb_3);
+    p->prog_mapping_list.emplace(3, skel->progs.kprobe_skb_4);
+    p->prog_mapping_list.emplace(4, skel->progs.kprobe_skb_5);
+    p->skel = skel;
+
     /* pass cfg */
     p->skel->rodata->cfg.output_skb = args.output_skb;
     p->skel->rodata->cfg.output_stack = args.output_stack;
 
-    /* modify ebpf code */
-    pcap2bpf::compile_ebpf_filter(args.filter_pcap, true);
-
-
-    /* disable section */
-    libbpf::bpf_program__set_autoattach(p->skel->progs.filter_pcap_ebpf_l3, false);
-    libbpf::bpf_program__set_autoattach(p->skel->progs.filter_pcap_ebpf_l2, false);
-    libbpf::bpf_program__set_autoload(p->skel->progs.filter_pcap_ebpf_l3, false);
-    libbpf::bpf_program__set_autoload(p->skel->progs.filter_pcap_ebpf_l2, false);
-
-
-
     libbpf::skbtracer_bpf__load(p->skel);
-
     for (const auto &prog : p->prog_mapping_list) {
         libbpf::bpf_program__set_autoattach(prog.second, false);
     }
