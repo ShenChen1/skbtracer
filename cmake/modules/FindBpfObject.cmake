@@ -164,6 +164,7 @@ macro(bpf_object name input)
     COMMAND ${BPFOBJECT_CLANG_EXE} -g -O2 -target bpf -D__TARGET_ARCH_${ARCH}
             ${CLANG_SYSTEM_INCLUDES} -I${GENERATED_VMLINUX_DIR}
             -isystem ${LIBBPF_INCLUDE_DIRS} -c ${BPF_C_FILE} -o ${BPF_O_FILE}
+    COMMAND bash -c "llvm-objcopy --remove-section .BTF.ext ${BPF_O_FILE}"
     COMMAND_EXPAND_LISTS
     VERBATIM
     DEPENDS ${BPF_C_FILE}
