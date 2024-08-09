@@ -2,31 +2,24 @@
 #include <vector>
 #include <spdlog/spdlog.h>
 
-extern "C" {
-#include <gelf.h>
-#include <libelf.h>
-#include <sys/mman.h>
-}
-
 #include "pcap2bpf.h"
 
 namespace cbpf {
 extern "C" {
-#include <linux/filter.h>
 #include <pcap/pcap.h>
 }
 } /* namespace cbpf */
 
 extern "C" {
-int bpf_convert_filter(cbpf::sock_filter *prog, int len,
+int bpf_convert_filter(libbpf::sock_filter *prog, int len,
                        libbpf::bpf_insn *new_prog, int *new_len);
 }
 
-static std::pair<int, cbpf::sock_fprog> compile_cbpf_filter(const std::string &filter_str, bool l3)
+static std::pair<int, libbpf::sock_fprog> compile_cbpf_filter(const std::string &filter_str, bool l3)
 {
     constexpr int MAXIMUM_SNAPLEN = 262144;
     int err = 0;
-    cbpf::sock_fprog sf = { 0, NULL };
+    libbpf::sock_fprog sf = { 0, NULL };
     cbpf::bpf_program bf = { 0, NULL };
     cbpf::pcap_t *pcap;
     int linktype = l3 ? DLT_RAW : DLT_EN10MB;
@@ -44,7 +37,7 @@ static std::pair<int, cbpf::sock_fprog> compile_cbpf_filter(const std::string &f
     }
 
     sf.len = bf.bf_len;
-    sf.filter = new cbpf::sock_filter[sf.len];
+    sf.filter = new libbpf::sock_filter[sf.len];
     if (!sf.filter) {
         spdlog::error("failed to allocate memory for sock_filter");
         err = -ENOMEM;
@@ -68,6 +61,17 @@ std::tuple<int, libbpf::bpf_insn *, size_t> pcap2bpf::compile_ebpf_filter(const 
     int err = 0;
     libbpf::bpf_insn *ebpf = NULL;
     int ebpf_len = 0;
+
+    if (filter_str.empty()) {
+        ebpf_len = 1;
+        ebpf = new libbpf::bpf_insn[ebpf_len];
+        ebpf[0].code = BPF_ALU64 | BPF_MOV | BPF_X;
+        ebpf[0].dst_reg = libbpf::BPF_REG_4;
+        ebpf[0].src_reg = libbpf::BPF_REG_5;
+        ebpf[0].off = 0;
+        ebpf[0].imm = 0;
+        return { 0, ebpf, ebpf_len };
+    }
 
     auto [ret, cbpf] = compile_cbpf_filter(filter_str, l3);
     if (ret) {
@@ -102,121 +106,36 @@ end:
     return { err, ebpf, ebpf_len };
 }
 
-int pcap2bpf::inject_ebpf_filter(const std::string &obj_path, const std::string &function, const libbpf::bpf_insn *prog_data, size_t prog_len)
+static bool insn_is_subprog_call(const libbpf::bpf_insn *insn)
 {
-    int err;
+    return BPF_CLASS(insn->code) == BPF_JMP &&
+           BPF_OP(insn->code) == BPF_CALL &&
+           BPF_SRC(insn->code) == BPF_K &&
+           insn->src_reg == BPF_PSEUDO_CALL &&
+           insn->dst_reg == 0 &&
+           insn->off == 0;
+}
 
-    if (elf_version(EV_CURRENT) == EV_NONE) {
-        spdlog::error("Failed to initialize libelf");
-        return -EINVAL;
-    }
+int pcap2bpf::inject_ebpf_filter(libbpf::bpf_program *prog, size_t position, const libbpf::bpf_insn *data, size_t len)
+{
+    auto old_len = libbpf::bpf_program__insn_cnt(prog);
+    auto old_data = libbpf::bpf_program__insns(prog);
 
-    int fd = open(obj_path.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd < 0) {
-        err = -errno;
-        spdlog::error("Failed to create fd");
-        return err;
-    }
+    auto new_len = old_len + len;
+    libbpf::bpf_insn *new_insn = new libbpf::bpf_insn[new_len];
 
-    Elf *elf = elf_begin(fd, ELF_C_RDWR, NULL);
-    if (elf == NULL) {
-        err = -errno;
-        spdlog::error("Failed to open ELF file");
-        return err;
-    }
-
-    size_t shstrs_sec_idx;
-    if (elf_getshdrstrndx(elf, &shstrs_sec_idx)) {
-        err = -errno;
-        spdlog::warn("failed to get SHSTRTAB section index");
-        return err;
-    }
-
-    GElf_Shdr shdr;
-    Elf_Scn *scn = NULL;
-    while ((scn = elf_nextscn(elf, scn)) != NULL) {
-        if (!gelf_getshdr(scn, &shdr)) {
+    for (size_t i = 0; i < position; i++) {
+        new_insn[i] = old_data[i];
+        if (!insn_is_subprog_call(&new_insn[i])) {
             continue;
         }
 
-        if (shdr.sh_type == SHT_SYMTAB) {
-            break;
+        if (i + new_insn[i].imm > position) {
+            new_insn[i].imm += len;
         }
     }
-    if (!scn) {
-        spdlog::error("Failed to find symbol table");
-        return -1;
-    }
 
-    Elf_Data *sym_data = elf_getdata(scn, 0);
-    if (!sym_data) {
-        err = -errno;
-        spdlog::warn("failed to get SHT_SYMTAB section data");
-        return err;
-    }
-
-    GElf_Sym sym;
-    int idx, nr_syms = sym_data->d_size / shdr.sh_entsize;
-    for (idx = 0; idx < nr_syms; ++idx) {
-        gelf_getsym(sym_data, idx, &sym);
-        const char *func_name = elf_strptr(elf, shdr.sh_link, sym.st_name);
-        if (!func_name) {
-            continue;
-        }
-
-        if (function == func_name) {
-            break;
-        }
-    }
-    if (idx == nr_syms) {
-        err = -ENOENT;
-        spdlog::warn("failed to find function {}", function);
-        return err;
-    }
-
-    Elf_Scn *target_scn = elf_getscn(elf, sym.st_shndx);
-    if (!target_scn) {
-        err = -errno;
-        spdlog::warn("failed to get section");
-        return err;
-    }
-
-    GElf_Shdr target_shdr;
-    gelf_getshdr(target_scn, &target_shdr);
-
-    GElf_Sym target_sym;
-    gelf_getsym(sym_data, idx, &target_sym);
-
-    Elf_Data *target_data = elf_getdata(target_scn, 0);
-    if (!target_data) {
-        err = -errno;
-        spdlog::warn("failed to get section data");
-        return err;
-    }
-
-    size_t new_size = prog_len * sizeof(libbpf::bpf_insn);
-    target_data->d_buf = realloc(target_data->d_buf, target_data->d_size + new_size);
-    std::memcpy(reinterpret_cast<char*>(target_data->d_buf) + sym.st_value + new_size, reinterpret_cast<char*>(target_data->d_buf) + sym.st_value, target_data->d_size - sym.st_value);
-    std::memcpy(reinterpret_cast<char*>(target_data->d_buf) + sym.st_value, prog_data, new_size);
-    target_data->d_size += new_size;
-
-    for (int i = 0; i < nr_syms; ++i) {
-        gelf_getsym(sym_data, i, &sym);
-        if (sym.st_shndx != target_sym.st_shndx) {
-            continue;
-        }
-
-        if (target_sym.st_value == sym.st_value) {
-            sym.st_size += new_size;
-        } else if (target_sym.st_value < sym.st_value) {
-            sym.st_value += new_size;
-        } else {
-            continue;
-        }
-        gelf_update_sym(sym_data, i, &sym);
-    }
-
-    elf_update(elf, ELF_C_WRITE);
-    elf_end(elf);
-    return 0;
+    std::memcpy(&new_insn[position], data, len * sizeof(libbpf::bpf_insn));
+    std::memcpy(&new_insn[position + len], &old_data[position], (old_len - position) * sizeof(libbpf::bpf_insn));
+    return libbpf::bpf_program__set_insns(prog, new_insn, new_len);
 }
