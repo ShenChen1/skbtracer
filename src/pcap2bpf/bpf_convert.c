@@ -8,6 +8,10 @@
 #include <linux/bpf.h>
 #include <linux/filter.h>
 
+#include "filter.h"
+
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+
 /* ArgX, context and stack frame pointer register positions. Note,
  * Arg1, Arg2, Arg3, etc are used as argument mappings of function
  * calls in BPF_CALL instruction.
@@ -27,47 +31,9 @@
 #define BPF_REG_D	BPF_REG_8	/* data, callee-saved */
 #define BPF_REG_H	BPF_REG_9	/* hlen, callee-saved */
 
-/* ALU ops on registers, bpf_add|sub|...: dst_reg += src_reg */
-
-#define BPF_ALU64_REG(OP, DST, SRC)				\
-	((struct bpf_insn) {					\
-		.code  = BPF_ALU64 | BPF_OP(OP) | BPF_X,	\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = 0,					\
-		.imm   = 0 })
-
 #define BPF_ALU32_REG(OP, DST, SRC)				\
 	((struct bpf_insn) {					\
 		.code  = BPF_ALU | BPF_OP(OP) | BPF_X,		\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = 0,					\
-		.imm   = 0 })
-
-/* ALU ops on immediates, bpf_add|sub|...: dst_reg += imm32 */
-
-#define BPF_ALU64_IMM(OP, DST, IMM)				\
-	((struct bpf_insn) {					\
-		.code  = BPF_ALU64 | BPF_OP(OP) | BPF_K,	\
-		.dst_reg = DST,					\
-		.src_reg = 0,					\
-		.off   = 0,					\
-		.imm   = IMM })
-
-#define BPF_ALU32_IMM(OP, DST, IMM)				\
-	((struct bpf_insn) {					\
-		.code  = BPF_ALU | BPF_OP(OP) | BPF_K,		\
-		.dst_reg = DST,					\
-		.src_reg = 0,					\
-		.off   = 0,					\
-		.imm   = IMM })
-
-/* Short form of mov, dst_reg = src_reg */
-
-#define BPF_MOV64_REG(DST, SRC)					\
-	((struct bpf_insn) {					\
-		.code  = BPF_ALU64 | BPF_MOV | BPF_X,		\
 		.dst_reg = DST,					\
 		.src_reg = SRC,					\
 		.off   = 0,					\
@@ -81,58 +47,6 @@
 		.off   = 0,					\
 		.imm   = 0 })
 
-/* Short form of mov, dst_reg = imm32 */
-
-#define BPF_MOV64_IMM(DST, IMM)					\
-	((struct bpf_insn) {					\
-		.code  = BPF_ALU64 | BPF_MOV | BPF_K,		\
-		.dst_reg = DST,					\
-		.src_reg = 0,					\
-		.off   = 0,					\
-		.imm   = IMM })
-
-#define BPF_MOV32_IMM(DST, IMM)					\
-	((struct bpf_insn) {					\
-		.code  = BPF_ALU | BPF_MOV | BPF_K,		\
-		.dst_reg = DST,					\
-		.src_reg = 0,					\
-		.off   = 0,					\
-		.imm   = IMM })
-
-/* BPF_LD_IMM64 macro encodes single 'load 64-bit immediate' insn */
-#define BPF_LD_IMM64(DST, IMM)					\
-	BPF_LD_IMM64_RAW(DST, 0, IMM)
-
-#define BPF_LD_IMM64_RAW(DST, SRC, IMM)				\
-	((struct bpf_insn) {					\
-		.code  = BPF_LD | BPF_DW | BPF_IMM,		\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = 0,					\
-		.imm   = (__u32) (IMM) }),			\
-	((struct bpf_insn) {					\
-		.code  = 0, /* zero is reserved opcode */	\
-		.dst_reg = 0,					\
-		.src_reg = 0,					\
-		.off   = 0,					\
-		.imm   = ((__u64) (IMM)) >> 32 })
-
-#define BPF_PSEUDO_MAP_FD	1
-
-/* pseudo BPF_LD_IMM64 insn used to refer to process-local map_fd */
-#define BPF_LD_MAP_FD(DST, MAP_FD)				\
-	BPF_LD_IMM64_RAW(DST, BPF_PSEUDO_MAP_FD, MAP_FD)
-
-/* Short form of mov based on type, BPF_X: dst_reg = src_reg, BPF_K: dst_reg = imm32 */
-
-#define BPF_MOV64_RAW(TYPE, DST, SRC, IMM)			\
-	((struct bpf_insn) {					\
-		.code  = BPF_ALU64 | BPF_MOV | BPF_SRC(TYPE),	\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = 0,					\
-		.imm   = IMM })
-
 #define BPF_MOV32_RAW(TYPE, DST, SRC, IMM)			\
 	((struct bpf_insn) {					\
 		.code  = BPF_ALU | BPF_MOV | BPF_SRC(TYPE),	\
@@ -141,8 +55,6 @@
 		.off   = 0,					\
 		.imm   = IMM })
 
-/* Direct packet access, R0 = *(uint *) (skb->data + imm32) */
-
 #define BPF_LD_ABS(SIZE, IMM)					\
 	((struct bpf_insn) {					\
 		.code  = BPF_LD | BPF_SIZE(SIZE) | BPF_ABS,	\
@@ -150,76 +62,6 @@
 		.src_reg = 0,					\
 		.off   = 0,					\
 		.imm   = IMM })
-
-/* Memory load, dst_reg = *(uint *) (src_reg + off16) */
-
-#define BPF_LDX_MEM(SIZE, DST, SRC, OFF)			\
-	((struct bpf_insn) {					\
-		.code  = BPF_LDX | BPF_SIZE(SIZE) | BPF_MEM,	\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = OFF,					\
-		.imm   = 0 })
-
-/* Memory store, *(uint *) (dst_reg + off16) = src_reg */
-
-#define BPF_STX_MEM(SIZE, DST, SRC, OFF)			\
-	((struct bpf_insn) {					\
-		.code  = BPF_STX | BPF_SIZE(SIZE) | BPF_MEM,	\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = OFF,					\
-		.imm   = 0 })
-
-/* Memory store, *(uint *) (dst_reg + off16) = imm32 */
-
-#define BPF_ST_MEM(SIZE, DST, OFF, IMM)				\
-	((struct bpf_insn) {					\
-		.code  = BPF_ST | BPF_SIZE(SIZE) | BPF_MEM,	\
-		.dst_reg = DST,					\
-		.src_reg = 0,					\
-		.off   = OFF,					\
-		.imm   = IMM })
-
-/* Conditional jumps against registers, if (dst_reg 'op' src_reg) goto pc + off16 */
-
-#define BPF_JMP_REG(OP, DST, SRC, OFF)				\
-	((struct bpf_insn) {					\
-		.code  = BPF_JMP | BPF_OP(OP) | BPF_X,		\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = OFF,					\
-		.imm   = 0 })
-
-/* Conditional jumps against immediates, if (dst_reg 'op' imm32) goto pc + off16 */
-
-#define BPF_JMP_IMM(OP, DST, IMM, OFF)				\
-	((struct bpf_insn) {					\
-		.code  = BPF_JMP | BPF_OP(OP) | BPF_K,		\
-		.dst_reg = DST,					\
-		.src_reg = 0,					\
-		.off   = OFF,					\
-		.imm   = IMM })
-
-/* Raw code statement block */
-
-#define BPF_RAW_INSN(CODE, DST, SRC, OFF, IMM)			\
-	((struct bpf_insn) {					\
-		.code  = CODE,					\
-		.dst_reg = DST,					\
-		.src_reg = SRC,					\
-		.off   = OFF,					\
-		.imm   = IMM })
-
-/* Program exit */
-
-#define BPF_EXIT_INSN()						\
-	((struct bpf_insn) {					\
-		.code  = BPF_JMP | BPF_EXIT,			\
-		.dst_reg = 0,					\
-		.src_reg = 0,					\
-		.off   = 0,					\
-		.imm   = 0 })
 
 static bool convert_bpf_extensions(struct sock_filter *fp,
 				   struct bpf_insn **insnp)
@@ -542,4 +384,131 @@ jmp_rest:
 err:
 	free(addrs);
 	return -EINVAL;
+}
+
+int get_insns_for_filter_empty(struct bpf_insn **data, int *len)
+{
+	const struct bpf_insn insns[] = {
+		BPF_MOV64_REG(BPF_REG_4, BPF_REG_5),
+	};
+
+	*len = ARRAY_SIZE(insns);
+	*data = malloc(*len * sizeof(struct bpf_insn));
+	if (*data == NULL) {
+		return -ENOMEM;
+	}
+	memcpy(*data, insns, *len * sizeof(struct bpf_insn));
+	return 0;
+}
+
+enum {
+	BpfReadKernelOffset	= -8*(0+1) - 80,
+	R1Offset 		= -8*(1+1) - 80,
+	R2Offset		= -8*(2+1) - 80,
+	R3Offset		= -8*(3+1) - 80,
+	R4Offset		= -8*(4+1) - 80,
+	R5Offset		= -8*(5+1) - 80,
+	AvailableOffset 	= -8*(6+1) - 80,
+};
+
+int get_insns_for_prepare_replace_insns(struct bpf_insn **data, int *len)
+{
+	const struct bpf_insn insns[] = {
+		// Store R4, R5 on stack.
+		BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_4, R4Offset),
+		BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_5, R5Offset),
+	};
+
+	*len = ARRAY_SIZE(insns);
+	*data = malloc(*len * sizeof(struct bpf_insn));
+	if (*data == NULL) {
+		return -ENOMEM;
+	}
+	memcpy(*data, insns, *len * sizeof(struct bpf_insn));
+	return 0;
+}
+
+int get_insns_for_post_replace_insns(struct bpf_insn **data, int *len)
+{
+	const struct bpf_insn insns[] = {
+		BPF_MOV64_IMM(BPF_REG_1, 0),
+		BPF_MOV64_IMM(BPF_REG_2, 0),
+		BPF_MOV64_IMM(BPF_REG_3, 0),
+		BPF_MOV64_REG(BPF_REG_4, BPF_REG_0),
+		BPF_MOV64_IMM(BPF_REG_5, 0),
+	};
+
+	*len = ARRAY_SIZE(insns);
+	*data = malloc(*len * sizeof(struct bpf_insn));
+	if (*data == NULL) {
+		return -ENOMEM;
+	}
+	memcpy(*data, insns, *len * sizeof(struct bpf_insn));
+	return 0;
+}
+
+int get_insns_for_replace_insns(struct bpf_insn *origin, struct bpf_insn **data, int *len)
+{
+	int size = 0;
+	switch(BPF_SIZE(origin->code)) {
+		case BPF_B:
+			size = 1;
+			break;
+		case BPF_H:
+			size = 2;
+			break;
+		case BPF_W:
+			size = 4;
+			break;
+		case BPF_DW:
+			size = 8;
+			break;
+	}
+
+	const struct bpf_insn insns[] = {
+		// Store R1, R2, R3 on stack.
+		BPF_STX_MEM(BPF_DW, BPF_REG_FP, BPF_REG_1, R1Offset),
+		BPF_STX_MEM(BPF_DW, BPF_REG_FP, BPF_REG_2, R2Offset),
+		BPF_STX_MEM(BPF_DW, BPF_REG_FP, BPF_REG_3, R3Offset),
+
+		// bpf_probe_read_kernel(RFP-8, size, inst.Src)
+		BPF_MOV64_REG(BPF_REG_1, BPF_REG_FP),
+		BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, BpfReadKernelOffset),
+		BPF_MOV64_IMM(BPF_REG_2, size),
+		BPF_MOV64_REG(BPF_REG_3, origin->src_reg),
+		BPF_ALU64_IMM(BPF_ADD, BPF_REG_3, origin->off),
+		BPF_EMIT_CALL(BPF_FUNC_probe_read_kernel),
+
+		// inst.Dst = *(RFP-8)
+		BPF_LDX_MEM(BPF_SIZE(origin->code), origin->dst_reg, BPF_REG_FP, BpfReadKernelOffset),
+
+		// Restore R4, R5 from stack.
+		BPF_LDX_MEM(BPF_DW, BPF_REG_4, BPF_REG_FP, R4Offset),
+		BPF_LDX_MEM(BPF_DW, BPF_REG_5, BPF_REG_FP, R5Offset),
+
+		// Restore R1, R2, R3 from stack.
+		BPF_LDX_MEM(BPF_DW, BPF_REG_1, BPF_REG_FP, R1Offset),
+		BPF_LDX_MEM(BPF_DW, BPF_REG_2, BPF_REG_FP, R2Offset),
+		BPF_LDX_MEM(BPF_DW, BPF_REG_3, BPF_REG_FP, R3Offset),
+	};
+
+	*len = ARRAY_SIZE(insns);
+	*data = malloc(*len * sizeof(struct bpf_insn));
+	if (*data == NULL) {
+		return -ENOMEM;
+	}
+	memcpy(*data, insns, *len * sizeof(struct bpf_insn));
+
+	if (origin->dst_reg == BPF_REG_1 || origin->dst_reg == BPF_REG_2 || origin->dst_reg == BPF_REG_3) {
+		memmove(*data + *len - (4 - origin->dst_reg), insns + *len - (4 - origin->dst_reg) + 1, (3 - origin->dst_reg) * sizeof(struct bpf_insn));
+		*len -= 1;
+	}
+
+	return 0;
+}
+
+int free_insns(struct bpf_insn *data)
+{
+	free(data);
+	return 0;
 }

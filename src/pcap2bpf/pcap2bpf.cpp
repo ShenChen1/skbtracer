@@ -13,6 +13,12 @@ extern "C" {
 extern "C" {
 int bpf_convert_filter(libbpf::sock_filter *prog, int len,
                        libbpf::bpf_insn *new_prog, int *new_len);
+
+int get_insns_for_filter_empty(libbpf::bpf_insn **data, int *len);
+int get_insns_for_prepare_replace_insns(libbpf::bpf_insn **data, int *len);
+int get_insns_for_post_replace_insns(libbpf::bpf_insn **data, int *len);
+int get_insns_for_replace_insns(libbpf::bpf_insn *origin, libbpf::bpf_insn **data, int *len);
+int free_insns(libbpf::bpf_insn *data);
 }
 
 static std::pair<int, libbpf::sock_fprog> compile_cbpf_filter(const std::string &filter_str, bool l3)
@@ -56,25 +62,69 @@ end:
     return { err, sf };
 }
 
+static bool insn_is_ld_abs(const libbpf::bpf_insn *insn)
+{
+    return BPF_CLASS(insn->code) == BPF_LD &&
+          (BPF_MODE(insn->code) == BPF_ABS ||
+           BPF_MODE(insn->code) == BPF_IND);
+}
+
+static std::tuple<int, libbpf::bpf_insn *, size_t> adjust_ebpf_filter(libbpf::bpf_insn *insn, size_t len)
+{
+    int err = 0;
+    libbpf::bpf_insn *insn_seg = NULL;
+    int insn_seg_len = 0;
+    std::vector<libbpf::bpf_insn> insns_vec = {};
+
+    err = get_insns_for_prepare_replace_insns(&insn_seg, &insn_seg_len);
+    if (err || !insn_seg || !insn_seg_len) {
+        return { -ENOMEM, NULL, 0 };
+    }
+    insns_vec.insert(insns_vec.end(), insn_seg, insn_seg + insn_seg_len);
+    free_insns(insn_seg);
+
+    for (size_t i = 0; i < len; i++) {
+        if (!insn_is_ld_abs(&insn[i])) {
+            insns_vec.push_back(insn[i]);
+            continue;
+        }
+
+        err = get_insns_for_replace_insns(&insn[i], &insn_seg, &insn_seg_len);
+        if (err || !insn_seg || !insn_seg_len) {
+            continue;
+        }
+        insns_vec.insert(insns_vec.end(), insn_seg, insn_seg + insn_seg_len);
+        free_insns(insn_seg);
+    }
+
+    err = get_insns_for_post_replace_insns(&insn_seg, &insn_seg_len);
+    if (err || !insn_seg || !insn_seg_len) {
+        return { -ENOMEM, NULL, 0 };
+    }
+    insns_vec.insert(insns_vec.end(), insn_seg, insn_seg + insn_seg_len);
+    free_insns(insn_seg);
+
+    auto new_len = insns_vec.size();
+    auto new_insn = new libbpf::bpf_insn[new_len];
+    std::copy(insns_vec.begin(), insns_vec.end(), new_insn);
+
+    return { 0, new_insn, new_len };
+}
+
 std::tuple<int, libbpf::bpf_insn *, size_t> pcap2bpf::compile_ebpf_filter(const std::string &filter_str, bool l3)
 {
     int err = 0;
-    libbpf::bpf_insn *ebpf = NULL;
-    int ebpf_len = 0;
+    libbpf::bpf_insn *ebpf = NULL, *new_ebpf = NULL;
+    int ebpf_len = 0, new_ebpf_len = 0;
 
     if (filter_str.empty()) {
-        ebpf_len = 1;
-        ebpf = new libbpf::bpf_insn[ebpf_len];
-        ebpf[0].code = BPF_ALU64 | BPF_MOV | BPF_X;
-        ebpf[0].dst_reg = libbpf::BPF_REG_4;
-        ebpf[0].src_reg = libbpf::BPF_REG_5;
-        ebpf[0].off = 0;
-        ebpf[0].imm = 0;
+        get_insns_for_filter_empty(&ebpf, &ebpf_len);
         return { 0, ebpf, ebpf_len };
     }
 
     auto [ret, cbpf] = compile_cbpf_filter(filter_str, l3);
     if (ret) {
+        spdlog::error("cannot compile cBPF filter");
         err = ret;
         goto end;
     }
@@ -100,6 +150,18 @@ std::tuple<int, libbpf::bpf_insn *, size_t> pcap2bpf::compile_ebpf_filter(const 
         spdlog::error("cannot convert cBPF to eBPF");
         goto end;
     }
+
+    /* 3rd pass: adjust ebpf */
+    std::tie(ret, new_ebpf, new_ebpf_len) = adjust_ebpf_filter(ebpf, ebpf_len);
+    if (ret) {
+        spdlog::error("cannot adjust eBPF");
+        err = ret;
+        goto end;
+    }
+    spdlog::info("adjust eBPF={} -> {}", ebpf_len, new_ebpf_len);
+    delete[] ebpf;
+    ebpf = new_ebpf;
+    ebpf_len = new_ebpf_len;
 
 end:
     delete[] cbpf.filter;

@@ -51,6 +51,10 @@ static int custom_prepare_load_skbtracer_prog(libbpf::bpf_program *prog, libbpf:
 
         bool is_l3 = func_name[std::strlen(func_prefix)] == '3' ? true : false;
         auto [ret, insn, len] = pcap2bpf::compile_ebpf_filter(p->filter_pcap, is_l3);
+        if (ret) {
+            spdlog::error("Failed to compile eBPF filter");
+            return ret;
+        }
         pcap2bpf::inject_ebpf_filter(prog, func_info[i].insn_off + offset, insn, len);
 
         delete[] insn;
