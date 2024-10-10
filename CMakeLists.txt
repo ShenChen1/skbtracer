@@ -21,3 +21,6 @@ get_cross_compile_prefix()
 
 add_subdirectory(3rdparty)
 add_subdirectory(src)
+
+enable_testing()
+add_subdirectory(tests)

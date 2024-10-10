@@ -13,6 +13,7 @@ ExternalProject_Add(libbpf
     UAPIDIR=
     ARCH=${CMAKE_SYSTEM_PROCESSOR}
     CROSS_COMPILE=${CROSS_COMPILE_PREFIX}
+    EXTRA_CFLAGS=-Wno-error
     install install_uapi_headers
   BUILD_IN_SOURCE TRUE
   INSTALL_COMMAND ""
@@ -24,6 +25,7 @@ ExternalProject_Add(bpftool
   CONFIGURE_COMMAND ""
   BUILD_COMMAND make bootstrap
     OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/bpftool/
+    EXTRA_CFLAGS=-Wno-error
   BUILD_IN_SOURCE TRUE
   INSTALL_COMMAND ""
 )
@@ -41,11 +43,14 @@ ExternalProject_Add(spdlog
 ExternalProject_Add(libpcap
   PREFIX libpcap
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libpcap
-  CONFIGURE_COMMAND ./autogen.sh && ./configure
-    --prefix=${CMAKE_CURRENT_BINARY_DIR}/libpcap
-    --host=${CROSS_COMPILE}
-    --enable-shared=no
-  BUILD_COMMAND make clean install
-  BUILD_IN_SOURCE TRUE
-  INSTALL_COMMAND ""
+  CONFIGURE_COMMAND cmake -S${CMAKE_CURRENT_SOURCE_DIR}/libpcap -Bbuild
+    -DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/libpcap
+    -DCMAKE_INSTALL_LIBDIR=lib
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+    -DBUILD_SHARED_LIBS=OFF
+    -DDISABLE_DBUS=ON
+    -DDISABLE_RDMA=ON
+    -DDISABLE_DPDK=ON
+  BUILD_COMMAND cmake --build build
+  INSTALL_COMMAND cmake --install build
 )

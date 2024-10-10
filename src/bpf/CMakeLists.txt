@@ -5,10 +5,11 @@ set(BPFOBJECT_VMLINUX_H ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-to
 find_package(BpfObject REQUIRED)
 bpf_object(skbtracer skbtracer.bpf.c)
 
-add_library(skbtracer_skel OBJECT
-    ${BPF_SKEL_FILE})
+add_custom_target(generate_skbtracer_skel DEPENDS ${BPF_SKEL_FILE})
+add_library(skbtracer_skel INTERFACE)
+add_dependencies(skbtracer_skel generate_skbtracer_skel)
 target_include_directories(skbtracer_skel
-    PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+    INTERFACE ${CMAKE_CURRENT_BINARY_DIR})
 
 add_library(${PROJECT_NAME} STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/bcc/libbpf-tools/trace_helpers.c
