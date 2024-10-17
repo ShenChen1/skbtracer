@@ -129,7 +129,10 @@ static int get_func_param_pos(libbpf::btf *btf, const int btf_id, const char *pa
             continue;
         }
         t = libbpf::btf__type_by_id(btf, t->type);
-        if (!t || !btf_is_struct(t)) {
+        while (t && (libbpf::btf_is_const(t) || libbpf::btf_is_volatile(t) || libbpf::btf_is_typedef(t))) {
+            t = libbpf::btf__type_by_id(btf, t->type);
+        }
+        if (!t || !libbpf::btf_is_struct(t)) {
             continue;
         }
         if (!std::strcmp(libbpf::btf__name_by_offset(btf, t->name_off), param)) {
