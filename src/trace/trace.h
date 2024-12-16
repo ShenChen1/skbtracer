@@ -20,6 +20,7 @@ class TraceMgr {
     using output_callback_t = void (*)(void *ctx, const void *data, size_t len);
     int register_output_callback(output_callback_t cb, void *ctx);
     int run();
+    void stop();
 
   private:
     TraceMgr();

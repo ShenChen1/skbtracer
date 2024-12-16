@@ -3,6 +3,7 @@
 #include <elf.h>
 #include <poll.h>
 
+#include <atomic>
 #include <fstream>
 #include <map>
 #include <regex>
@@ -23,6 +24,8 @@ typedef struct {
     std::map<std::string, libbpf::bpf_link *> link_mapping_list;
     libbpf::skbtracer_bpf *skel;
     int libbpf_sec_handler;
+    libbpf::ring_buffer *rb;
+    std::atomic<bool> exiting{false};
 
     TraceMgr::output_callback_t output_cb;
     void *ctx;
@@ -35,7 +38,9 @@ static int custom_prepare_load_skbtracer_prog(libbpf::bpf_program *prog, libbpf:
     auto obj = p->skel->obj;
     auto btf = libbpf::bpf_object__btf(obj);
     auto func_info = static_cast<const libbpf::bpf_func_info*>(opts->func_info);
-    size_t offset = 0;
+    ssize_t offset = 0;
+
+    spdlog::info("prepare_load for {}, func_info_cnt={}", libbpf::bpf_program__name(prog), opts->func_info_cnt);
 
     for (size_t i = 0; i < opts->func_info_cnt; i++) {
         const libbpf::btf_type *t = libbpf::btf__type_by_id(btf, func_info[i].type_id);
@@ -44,27 +49,30 @@ static int custom_prepare_load_skbtracer_prog(libbpf::bpf_program *prog, libbpf:
         }
 
         const auto func_name = libbpf::btf__name_by_offset(btf, t->name_off);
-        if (func_name == NULL || std::string(func_name).find(func_prefix) != 0) {
+        if (func_name == nullptr || std::string(func_name).find(func_prefix) != 0) {
             continue;
         }
         spdlog::info("Injecting eBPF filter into {} for {}", func_name, libbpf::bpf_program__name(prog));
 
-        bool is_l3 = func_name[std::strlen(func_prefix)] == '3' ? true : false;
+        bool is_l3 = func_name[std::strlen(func_prefix)] == '3';
         auto [ret, insn, len] = pcap2bpf::compile_ebpf_filter(p->filter_pcap, is_l3);
         if (ret) {
             spdlog::error("Failed to compile eBPF filter");
             return ret;
         }
-        pcap2bpf::inject_ebpf_filter(prog, func_info[i].insn_off + offset, insn, len);
+
+        constexpr size_t STUB_ORIG_LEN = 7;
+        size_t current_pos = func_info[i].insn_off + offset;
+        pcap2bpf::inject_ebpf_filter(prog, current_pos, STUB_ORIG_LEN, insn, len);
 
         delete[] insn;
-        offset += len;
+        offset += ((ssize_t)len - (ssize_t)STUB_ORIG_LEN);
     }
 
     // drop func_info and line_info to avoid verification failure
-    opts->func_info = NULL;
+    opts->func_info = nullptr;
     opts->func_info_cnt = 0;
-    opts->line_info = NULL;
+    opts->line_info = nullptr;
     opts->line_info_cnt = 0;
     return 0;
 }
@@ -72,10 +80,14 @@ static int custom_prepare_load_skbtracer_prog(libbpf::bpf_program *prog, libbpf:
 TraceMgr::TraceMgr()
 {
     auto p = new trace_mgr_priv_t();
+    p->rb = nullptr;
 
     auto libbpf_print_fn = [](
         libbpf::libbpf_print_level level,
         const char *format, va_list args) {
+            if (level == libbpf::LIBBPF_DEBUG) {
+                return 0;
+            }
             return vfprintf(stderr, format, args);
         };
 
@@ -86,7 +98,11 @@ TraceMgr::TraceMgr()
         .prog_prepare_load_fn = custom_prepare_load_skbtracer_prog,
     );
     handler_opts.cookie = reinterpret_cast<long>(p);
-    int handler = libbpf::libbpf_register_prog_handler("skbtracer/", libbpf::BPF_PROG_TYPE_KPROBE, static_cast<libbpf::bpf_attach_type>(0), &handler_opts);
+    int handler = libbpf::libbpf_register_prog_handler(
+        "skbtracer/",
+        libbpf::BPF_PROG_TYPE_KPROBE,
+        static_cast<libbpf::bpf_attach_type>(0),
+        &handler_opts);
     if (handler < 0) {
         throw std::runtime_error("Failed to register prog handler");
     }
@@ -97,7 +113,6 @@ TraceMgr::TraceMgr()
         throw std::runtime_error("Failed to open BPF skeleton");
     }
     p->skel = skel;
-
 
     p->prog_mapping_list.emplace(0, skel->progs.kprobe_skb_1);
     p->prog_mapping_list.emplace(1, skel->progs.kprobe_skb_2);
@@ -111,6 +126,20 @@ TraceMgr::TraceMgr()
 TraceMgr::~TraceMgr()
 {
     auto p = static_cast<trace_mgr_priv_t *>(priv);
+    if (!p) {
+        return;
+    }
+
+    if (p->rb) {
+        libbpf::ring_buffer__free(p->rb);
+        p->rb = nullptr;
+    }
+
+    for (auto &it : p->link_mapping_list) {
+        libbpf::bpf_link__destroy(it.second);
+    }
+    p->link_mapping_list.clear();
+
     if (p->libbpf_sec_handler >= 0) {
         libbpf::libbpf_unregister_prog_handler(p->libbpf_sec_handler);
     }
@@ -128,15 +157,23 @@ int TraceMgr::init(const Options::args &args)
     /* pass cfg */
     p->skel->rodata->cfg.output_skb = args.output_skb;
     p->skel->rodata->cfg.output_stack = args.output_stack;
-    libbpf::skbtracer_bpf__load(p->skel);
+    p->skel->rodata->cfg.track_skb = args.track_skb;
+    p->skel->rodata->cfg.mark = args.filter_mark;
+    p->skel->rodata->cfg.ifindex = args.filter_ifindex;
+    p->skel->rodata->cfg.netns = args.filter_netns_id;
+    int err = libbpf::skbtracer_bpf__load(p->skel);
+    if (err) {
+        spdlog::error("Failed to load BPF skeleton: {}", err);
+        return err;
+    }
 
     for (const auto &prog : p->prog_mapping_list) {
         libbpf::bpf_program__set_autoattach(prog.second, false);
     }
 
-    int err = libbpf::skbtracer_bpf__attach(p->skel);
+    err = libbpf::skbtracer_bpf__attach(p->skel);
     if (err) {
-        spdlog::error("Failed to attach BPF skeleton");
+        spdlog::error("Failed to attach BPF skeleton: {}", err);
         return err;
     }
 
@@ -184,37 +221,43 @@ int TraceMgr::register_output_callback(TraceMgr::output_callback_t cb, void *ctx
     return 0;
 }
 
+void TraceMgr::stop()
+{
+    auto p = static_cast<trace_mgr_priv_t *>(priv);
+    p->exiting = true;
+}
+
 int TraceMgr::run()
 {
     auto p = static_cast<trace_mgr_priv_t *>(priv);
-    int map_fd = bpf_map__fd(p->skel->maps.events);
+    int map_fd = libbpf::bpf_map__fd(p->skel->maps.events);
     if (map_fd < 0) {
         spdlog::error("Failed to get events map fd");
         return -EFAULT;
     }
 
-    while (1) {
-        struct pollfd fd = {
-            .fd = map_fd,
-            .events = POLLIN,
-        };
-        int ret = poll(&fd, 1, -1);
-        if (ret < 0) {
-            spdlog::error("Failed to poll events: %d", errno);
-            break;
+    auto handle_ringbuf_event = [](void *ctx, void *data, size_t len) -> int {
+        auto priv = reinterpret_cast<trace_mgr_priv_t*>(ctx);
+        if (priv->output_cb) {
+            priv->output_cb(priv->ctx, data, len);
         }
+        return 0;
+    };
 
-        skb_event event = {};
-        int err = bpf_map__lookup_and_delete_elem(p->skel->maps.events, NULL, 0, &event, sizeof(event), 0);
-        if (err) {
-            if (errno == ENOENT)
+    p->rb = libbpf::ring_buffer__new(map_fd, handle_ringbuf_event, p, nullptr);
+    if (!p->rb) {
+        spdlog::error("Failed to create ring buffer: {}", errno);
+        return -errno;
+    }
+
+    while (!p->exiting) {
+        int err = libbpf::ring_buffer__poll(p->rb, 100 /* timeout_ms */);
+        if (err < 0) {
+            if (err == -EINTR) {
                 continue;
-            spdlog::error("Failed to lookup elem: %d", errno);
+            }
+            spdlog::error("Failed to poll ring buffer: {}", err);
             break;
-        }
-
-        if (p->output_cb) {
-            p->output_cb(p->ctx, &event, sizeof(event));
         }
     }
 
