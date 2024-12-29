@@ -10,3 +10,10 @@ target_link_libraries(test_options
     cfg
     utils)
 add_test(NAME test_options COMMAND test_options)
+
+add_executable(test_output test_output.cpp)
+target_link_libraries(test_output
+    output
+    bpf
+    utils)
+add_test(NAME test_output COMMAND test_output)
