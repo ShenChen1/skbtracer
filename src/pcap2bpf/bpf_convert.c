@@ -65,19 +65,28 @@
         .off   = 0,                                             \
         .imm   = LEN })
 
-int get_insns_for_filter_empty(struct bpf_insn **data, int *len)
+int get_insns_for_filter_empty(struct bpf_insn *data, int *len)
 {
     const struct bpf_insn insns[] = {
         BPF_MOV64_IMM(BPF_REG_0, 1),
         BPF_EXIT_INSN(),
     };
 
-    *len = ARRAY_SIZE(insns);
-    *data = malloc(*len * sizeof(struct bpf_insn));
-    if (*data == NULL) {
-        return -ENOMEM;
+    if (!len) {
+        return -EINVAL;
     }
-    memcpy(*data, insns, *len * sizeof(struct bpf_insn));
+
+    if (!data) {
+        *len = (int)ARRAY_SIZE(insns);
+        return 0;
+    }
+
+    if (*len < (int)ARRAY_SIZE(insns)) {
+        return -EINVAL;
+    }
+
+    *len = (int)ARRAY_SIZE(insns);
+    memcpy(data, insns, sizeof(insns));
     return 0;
 }
 

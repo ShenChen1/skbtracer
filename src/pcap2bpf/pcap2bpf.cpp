@@ -14,7 +14,7 @@ extern "C" {
 extern "C" {
 int bpf_convert_filter(libbpf::sock_filter *prog, int len,
                        libbpf::bpf_insn *new_prog, int *new_len);
-int get_insns_for_filter_empty(libbpf::bpf_insn **data, int *len);
+int get_insns_for_filter_empty(libbpf::bpf_insn *data, int *len);
 }
 
 static std::pair<int, libbpf::sock_fprog> compile_cbpf_filter(const std::string &filter_str, bool l3)
@@ -60,10 +60,18 @@ end:
 std::tuple<int, libbpf::bpf_insn *, size_t> pcap2bpf::compile_ebpf_filter(const std::string &filter_str, bool l3)
 {
     if (filter_str.empty()) {
-        libbpf::bpf_insn *ebpf = nullptr;
         int len = 0;
-        int err = get_insns_for_filter_empty(&ebpf, &len);
-        return { err, ebpf, (size_t)len };
+        int err = get_insns_for_filter_empty(nullptr, &len);
+        if (err) {
+            return { err, nullptr, 0 };
+        }
+        auto ebpf = new libbpf::bpf_insn[len];
+        err = get_insns_for_filter_empty(ebpf, &len);
+        if (err) {
+            delete[] ebpf;
+            return { err, nullptr, 0 };
+        }
+        return { 0, ebpf, (size_t)len };
     }
 
     auto [ret, cbpf] = compile_cbpf_filter(filter_str, l3);
