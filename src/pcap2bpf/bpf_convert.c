@@ -99,34 +99,61 @@ static void emit_epilogue_fail(struct bpf_insn **insn)
 static void emit_packet_load(struct bpf_insn **insn, uint8_t code, int32_t imm)
 {
     int size = (BPF_SIZE(code) == BPF_B) ? 1 : ((BPF_SIZE(code) == BPF_H) ? 2 : 4);
+    struct bpf_insn *fail_jmps[8];
+    int fail_cnt = 0;
 
-    // R1 = FP - 56 (read buffer)
+    // 1. Calculate offset into R2 (as u32) and check addition overflow
+    if (BPF_MODE(code) == BPF_IND) {
+        *(*insn)++ = BPF_MOV32_REG(BPF_REG_2, BPF_REG_X);
+        *(*insn)++ = BPF_MOV32_REG(BPF_REG_1, BPF_REG_2);
+        *(*insn)++ = BPF_ALU32_IMM(BPF_ADD, BPF_REG_2, imm);
+        fail_jmps[fail_cnt++] = *insn;
+        *(*insn)++ = BPF_JMP_REG(BPF_JLT, BPF_REG_2, BPF_REG_1, 0);
+    } else {
+        *(*insn)++ = BPF_MOV32_IMM(BPF_REG_2, imm);
+    }
+
+    // Reject negative or >= 2GB offsets
+    fail_jmps[fail_cnt++] = *insn;
+    *(*insn)++ = BPF_JMP32_IMM(BPF_JSLT, BPF_REG_2, 0, 0);
+
+    // 2. Compute end_offset (R3 = R2 + size) and check addition overflow
+    *(*insn)++ = BPF_MOV32_REG(BPF_REG_3, BPF_REG_2);
+    *(*insn)++ = BPF_ALU32_IMM(BPF_ADD, BPF_REG_3, size);
+    fail_jmps[fail_cnt++] = *insn;
+    *(*insn)++ = BPF_JMP_REG(BPF_JLT, BPF_REG_3, BPF_REG_2, 0);
+
+    // 3. Load packet pointers and verify end_offset <= (data_end - data)
+    *(*insn)++ = BPF_LDX_MEM(BPF_DW, BPF_REG_4, BPF_REG_FP, -40);
+    *(*insn)++ = BPF_LDX_MEM(BPF_DW, BPF_REG_5, BPF_REG_FP, -48);
+    fail_jmps[fail_cnt++] = *insn;
+    *(*insn)++ = BPF_JMP_REG(BPF_JLT, BPF_REG_5, BPF_REG_4, 0);
+    *(*insn)++ = BPF_ALU64_REG(BPF_SUB, BPF_REG_5, BPF_REG_4);
+    fail_jmps[fail_cnt++] = *insn;
+    *(*insn)++ = BPF_JMP_REG(BPF_JGT, BPF_REG_3, BPF_REG_5, 0);
+
+    // 4. Perform bounded probe read
     *(*insn)++ = BPF_MOV64_REG(BPF_REG_1, BPF_REG_FP);
     *(*insn)++ = BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, -56);
-
-    // R2 = size
+    *(*insn)++ = BPF_MOV64_REG(BPF_REG_3, BPF_REG_4);
+    *(*insn)++ = BPF_ALU64_REG(BPF_ADD, BPF_REG_3, BPF_REG_2);
     *(*insn)++ = BPF_MOV64_IMM(BPF_REG_2, size);
-
-    // R3 = *(FP - 40) (packet data pointer)
-    *(*insn)++ = BPF_LDX_MEM(BPF_DW, BPF_REG_3, BPF_REG_FP, -40);
-    if (BPF_MODE(code) == BPF_IND) {
-        *(*insn)++ = BPF_ALU64_REG(BPF_ADD, BPF_REG_3, BPF_REG_X);
-    }
-    *(*insn)++ = BPF_ALU64_IMM(BPF_ADD, BPF_REG_3, imm);
-
-    // call bpf_probe_read_kernel
     *(*insn)++ = BPF_EMIT_CALL(BPF_FUNC_probe_read_kernel);
+    fail_jmps[fail_cnt++] = *insn;
+    *(*insn)++ = BPF_JMP_IMM(BPF_JNE, BPF_REG_0, 0, 0);
 
-    // If read succeeded (R0 == 0), skip failure epilogue (2 instructions)
-    *(*insn)++ = BPF_JMP_IMM(BPF_JEQ, BPF_REG_0, 0, 2);
+    // Skip failure epilogue on success
+    *(*insn)++ = BPF_JMP_IMM(BPF_JA, 0, 0, 2);
 
-    // Failure: return 0
+    // Backpatch forward jumps to failure epilogue
+    struct bpf_insn *fail_target = *insn;
+    for (int j = 0; j < fail_cnt; j++) {
+        fail_jmps[j]->off = (int16_t)(fail_target - (fail_jmps[j] + 1));
+    }
     emit_epilogue_fail(insn);
 
-    // Load value into accumulator A (R0)
+    // Load value into accumulator A (R0) and convert byte order
     *(*insn)++ = BPF_LDX_MEM(BPF_SIZE(code), BPF_REG_A, BPF_REG_FP, -56);
-
-    // Convert network byte order to host byte order
     if (BPF_SIZE(code) == BPF_H) {
         *(*insn)++ = BPF_ENDIAN(BPF_FROM_BE, BPF_REG_A, 16);
     } else if (BPF_SIZE(code) == BPF_W) {
@@ -173,7 +200,7 @@ do_pass:
     }
 
     for (i = 0; i < len; fp++, i++) {
-        struct bpf_insn tmp_insns[64] = { };
+        struct bpf_insn tmp_insns[128] = { };
         struct bpf_insn *insn = tmp_insns;
 
         if (addrs) {
