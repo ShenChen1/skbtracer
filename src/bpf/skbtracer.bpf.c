@@ -220,30 +220,27 @@ int BPF_KPROBE(trace_consume_skb)
 
 static __always_inline int track_skb_clone(struct sk_buff *old, struct sk_buff *new)
 {
-    if (!old || !new) {
+    if (!cfg.track_skb || !old || !new) {
         return BPF_OK;
     }
+
     u64 skb_addr_old = (u64)old;
-    u64 skb_addr_new = (u64) new;
+    u64 skb_addr_new = (u64)new;
     if (bpf_map_lookup_elem(&skb_addresses, &skb_addr_old)) {
         bpf_map_update_elem(&skb_addresses, &skb_addr_new, &TRUE, BPF_ANY);
     }
     return BPF_OK;
 }
 
-SEC("kprobe/skb_clone")
-int BPF_KRETPROBE(skb_clone)
+SEC("fexit/skb_clone")
+int BPF_PROG(trace_skb_clone_exit, struct sk_buff *old, gfp_t gfp_mask, struct sk_buff *new)
 {
-    struct sk_buff *old = (struct sk_buff *)PT_REGS_PARM1(ctx);
-    struct sk_buff *new = (struct sk_buff *)PT_REGS_RET(ctx);
     return track_skb_clone(old, new);
 }
 
-SEC("kprobe/skb_copy")
-int BPF_KRETPROBE(skb_copy)
+SEC("fexit/skb_copy")
+int BPF_PROG(trace_skb_copy_exit, struct sk_buff *old, gfp_t gfp_mask, struct sk_buff *new)
 {
-    struct sk_buff *old = (struct sk_buff *)PT_REGS_PARM1(ctx);
-    struct sk_buff *new = (struct sk_buff *)PT_REGS_RET(ctx);
     return track_skb_clone(old, new);
 }
 
