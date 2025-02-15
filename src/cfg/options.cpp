@@ -136,7 +136,12 @@ static bool resolve_ifname_in_netns(const std::string &ifname, int target_netns_
     int saved_errno = errno;
 
     if (!is_same_netns) {
-        setns(self_fd, CLONE_NEWNET);
+        if (setns(self_fd, CLONE_NEWNET) < 0) {
+            int restore_errno = errno;
+            close(self_fd);
+            err = "Failed to restore original netns: " + std::string(strerror(restore_errno));
+            return false;
+        }
     }
     close(self_fd);
 

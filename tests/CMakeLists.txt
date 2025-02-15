@@ -24,3 +24,13 @@ target_link_libraries(test_skb_tracking
     bpf
     utils)
 add_test(NAME test_skb_tracking COMMAND test_skb_tracking)
+
+add_executable(test_trace test_trace.cpp)
+target_link_libraries(test_trace
+    trace
+    pcap2bpf
+    skbtracer_skel
+    bpf
+    utils)
+add_test(NAME test_trace COMMAND test_trace)
+

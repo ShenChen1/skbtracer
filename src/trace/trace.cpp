@@ -63,9 +63,13 @@ static int custom_prepare_load_skbtracer_prog(libbpf::bpf_program *prog, libbpf:
 
         constexpr size_t STUB_ORIG_LEN = 7;
         size_t current_pos = func_info[i].insn_off + offset;
-        pcap2bpf::inject_ebpf_filter(prog, current_pos, STUB_ORIG_LEN, insn, len);
-
+        int inject_ret = pcap2bpf::inject_ebpf_filter(prog, current_pos, STUB_ORIG_LEN, insn, len);
         delete[] insn;
+        if (inject_ret != 0) {
+            spdlog::error("Failed to inject eBPF filter into {}: {}", func_name, inject_ret);
+            return inject_ret;
+        }
+
         offset += ((ssize_t)len - (ssize_t)STUB_ORIG_LEN);
     }
 
@@ -250,6 +254,7 @@ int TraceMgr::run()
         return -errno;
     }
 
+    int poll_err = 0;
     while (!p->exiting) {
         int err = libbpf::ring_buffer__poll(p->rb, 100 /* timeout_ms */);
         if (err < 0) {
@@ -257,9 +262,10 @@ int TraceMgr::run()
                 continue;
             }
             spdlog::error("Failed to poll ring buffer: {}", err);
+            poll_err = err;
             break;
         }
     }
 
-    return 0;
+    return poll_err;
 }
