@@ -161,10 +161,10 @@ int TraceMgr::init(const Options::args &args)
     /* pass cfg */
     p->skel->rodata->cfg.output_skb = args.output_skb;
     p->skel->rodata->cfg.output_stack = args.output_stack;
-    p->skel->rodata->cfg.track_skb = args.track_skb;
     p->skel->rodata->cfg.mark = args.filter_mark;
     p->skel->rodata->cfg.ifindex = args.filter_ifindex;
     p->skel->rodata->cfg.netns = args.filter_netns_id;
+
     int err = libbpf::skbtracer_bpf__load(p->skel);
     if (err) {
         spdlog::error("Failed to load BPF skeleton: {}", err);

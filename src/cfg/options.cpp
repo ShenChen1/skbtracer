@@ -21,8 +21,7 @@ static void usage()
               << "  -m, --filter-mark     Filter by skb mark (e.g. 100 or 0x64)\n"
               << "  -i, --filter-ifname   filter skb ifname in --filter-netns (if not specified, use current netns)\n"
               << "      --filter-netns    filter netns (\"/proc/<pid>/ns/net\", \"inode:<inode>\")\n"
-              << "  -s, --output-skb      Output detailed skb metadata\n"
-              << "  -t, --track-skb       Trace a packet even if it does not match given filters\n\n"
+              << "  -s, --output-skb      Output detailed skb metadata\n\n"
               << "Examples:\n"
               << "  skbtracer 'icmp'\n"
               << "  skbtracer 'icmp6'\n"
@@ -213,7 +212,7 @@ const Options::args Options::parse_args(int argc, char **argv)
         OPT_FILTER_NETNS = 1000,
     };
 
-    const char *const short_options = "hvf:m:i:st";
+    const char *const short_options = "hvf:m:i:s";
     const option long_options[] = {
         option{ "help", no_argument, nullptr, 'h' },
         option{ "verbose", no_argument, nullptr, 'v' },
@@ -222,7 +221,6 @@ const Options::args Options::parse_args(int argc, char **argv)
         option{ "filter-ifname", required_argument, nullptr, 'i' },
         option{ "filter-netns", required_argument, nullptr, OPT_FILTER_NETNS },
         option{ "output-skb", no_argument, nullptr, 's' },
-        option{ "track-skb", no_argument, nullptr, 't' },
         option{ nullptr, 0, nullptr, 0 }, // Must be last
     };
 
@@ -263,9 +261,6 @@ const Options::args Options::parse_args(int argc, char **argv)
                 break;
             case 's':
                 args.output_skb = true;
-                break;
-            case 't':
-                args.track_skb = true;
                 break;
             default:
                 usage();

@@ -7,7 +7,6 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define MAX_TRACK_SIZE 1024
 #define RINGBUF_SIZE (256 * 1024)
 
 #ifndef IPPROTO_ICMPV6
@@ -19,14 +18,6 @@ struct {
     __uint(max_entries, RINGBUF_SIZE);
 } events SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u64);
-    __type(value, bool);
-    __uint(max_entries, MAX_TRACK_SIZE);
-} skb_addresses SEC(".maps");
-
-const static bool TRUE = true;
 const volatile struct skb_config cfg;
 
 static __always_inline u32 get_netns(struct sk_buff *skb)
@@ -92,18 +83,7 @@ static __always_inline bool filter_pcap(struct sk_buff *skb)
 
 static __always_inline bool filter(struct sk_buff *skb)
 {
-    u64 skb_addr = (u64)skb;
-    if (cfg.track_skb && bpf_map_lookup_elem(&skb_addresses, &skb_addr)) {
-        return true;
-    }
-
-    if (filter_pcap(skb) && filter_meta(skb)) {
-        if (cfg.track_skb) {
-            bpf_map_update_elem(&skb_addresses, &skb_addr, &TRUE, BPF_ANY);
-        }
-        return true;
-    }
-    return false;
+    return filter_pcap(skb) && filter_meta(skb);
 }
 
 static __always_inline void set_output(void *ctx, struct sk_buff *skb, struct skb_event *event)
@@ -201,47 +181,5 @@ SKBTRACER_ADD_KPROBE(2)
 SKBTRACER_ADD_KPROBE(3)
 SKBTRACER_ADD_KPROBE(4)
 SKBTRACER_ADD_KPROBE(5)
-
-SEC("kprobe/__kfree_skb")
-int BPF_KPROBE(trace_kfree_skb)
-{
-    u64 skb_addr = (u64)PT_REGS_PARM1(ctx);
-    bpf_map_delete_elem(&skb_addresses, &skb_addr);
-    return BPF_OK;
-}
-
-SEC("kprobe/consume_skb")
-int BPF_KPROBE(trace_consume_skb)
-{
-    u64 skb_addr = (u64)PT_REGS_PARM1(ctx);
-    bpf_map_delete_elem(&skb_addresses, &skb_addr);
-    return BPF_OK;
-}
-
-static __always_inline int track_skb_clone(struct sk_buff *old, struct sk_buff *new)
-{
-    if (!cfg.track_skb || !old || !new) {
-        return BPF_OK;
-    }
-
-    u64 skb_addr_old = (u64)old;
-    u64 skb_addr_new = (u64)new;
-    if (bpf_map_lookup_elem(&skb_addresses, &skb_addr_old)) {
-        bpf_map_update_elem(&skb_addresses, &skb_addr_new, &TRUE, BPF_ANY);
-    }
-    return BPF_OK;
-}
-
-SEC("fexit/skb_clone")
-int BPF_PROG(trace_skb_clone_exit, struct sk_buff *old, gfp_t gfp_mask, struct sk_buff *new)
-{
-    return track_skb_clone(old, new);
-}
-
-SEC("fexit/skb_copy")
-int BPF_PROG(trace_skb_copy_exit, struct sk_buff *old, gfp_t gfp_mask, struct sk_buff *new)
-{
-    return track_skb_clone(old, new);
-}
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";

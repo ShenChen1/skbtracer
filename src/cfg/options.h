@@ -18,7 +18,6 @@ typedef struct {
 
     bool output_skb;
     bool output_stack;
-    bool track_skb;
 
     int verbose;
 } args;

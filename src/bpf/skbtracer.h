@@ -37,7 +37,6 @@ struct skb_config {
     __u8 output_skb;
     __u8 output_stack;
     __u8 is_set;
-    __u8 track_skb;
 } __attribute__((packed));
 
 #endif /* __SKBTRACER_H__ */
