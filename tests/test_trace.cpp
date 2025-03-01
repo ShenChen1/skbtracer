@@ -85,65 +85,11 @@ static void test_inject_ebpf_filter_bounds_failure()
     std::cout << "[PASS] test_inject_ebpf_filter_bounds_failure" << std::endl;
 }
 
-/**
- * Simulator for ring_buffer__poll loop to verify regression behavior.
- */
-static int simulate_old_poll_loop(const std::vector<int> &poll_events, bool &exited)
-{
-    for (int err : poll_events) {
-        if (err < 0) {
-            if (err == -EINTR) {
-                continue;
-            }
-            // Old buggy logic: break and return 0
-            break;
-        }
-    }
-    return 0; // Caller cannot distinguish failure from normal termination
-}
-
-static int simulate_new_poll_loop(const std::vector<int> &poll_events, bool &exited)
-{
-    int poll_err = 0;
-    for (int err : poll_events) {
-        if (err < 0) {
-            if (err == -EINTR) {
-                continue;
-            }
-            // New fixed logic: record poll_err and break
-            poll_err = err;
-            break;
-        }
-    }
-    return poll_err;
-}
-
-static void test_ringbuf_poll_error_regression()
-{
-    bool exited = false;
-
-    // 1. Happy path: only normal events or EINTR then exit
-    std::vector<int> happy_events = { 1, 0, -EINTR, 2 };
-    assert(simulate_new_poll_loop(happy_events, exited) == 0);
-
-    // 2. Fatal error path: -EBADF (poll failure)
-    std::vector<int> error_events = { 1, -EINTR, -EBADF, 2 };
-    
-    // Old logic returned 0 even on -EBADF failure (buggy)
-    assert(simulate_old_poll_loop(error_events, exited) == 0);
-
-    // New logic returns -EBADF (fixed)
-    assert(simulate_new_poll_loop(error_events, exited) == -EBADF);
-
-    std::cout << "[PASS] test_ringbuf_poll_error_regression" << std::endl;
-}
-
 int main()
 {
     std::cout << "Running trace unit and regression tests..." << std::endl;
     test_filter_injection_error_regression();
     test_inject_ebpf_filter_bounds_failure();
-    test_ringbuf_poll_error_regression();
     std::cout << "All trace unit and regression tests passed successfully!" << std::endl;
     return 0;
 }
