@@ -1,9 +1,8 @@
 #include <cassert>
-#include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <getopt.h>
 #include <iostream>
+#include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -236,41 +235,6 @@ static void test_netns_invariance_after_resolve()
     std::cout << "[PASS] test_netns_invariance_after_resolve" << std::endl;
 }
 
-static void test_netns_restore_failure_simulation()
-{
-    auto simulate_old_restore = [](int mock_setns_restore_ret, unsigned int idx) -> bool {
-        (void)mock_setns_restore_ret;
-        if (idx == 0) {
-            return false;
-        }
-        return true;
-    };
-
-    auto simulate_new_restore = [](int mock_setns_restore_ret, int mock_errno, unsigned int idx, std::string &err) -> bool {
-        if (mock_setns_restore_ret < 0) {
-            int restore_errno = mock_errno;
-            err = "Failed to restore original netns: " + std::string(strerror(restore_errno));
-            return false;
-        }
-        if (idx == 0) {
-            err = "Interface not found";
-            return false;
-        }
-        return true;
-    };
-
-    std::string err;
-    bool old_res = simulate_old_restore(-1, 1);
-    assert(old_res == true); // Old logic erroneously reported success when restore failed!
-
-    bool new_res = simulate_new_restore(-1, EPERM, 1, err);
-    assert(new_res == false); // New logic treats restore failure as fatal
-    assert(err.find("Failed to restore original netns") != std::string::npos);
-    assert(err.find(strerror(EPERM)) != std::string::npos);
-
-    std::cout << "[PASS] test_netns_restore_failure_simulation" << std::endl;
-}
-
 int main()
 {
     std::cout << "Running options regression and unit tests..." << std::endl;
@@ -287,7 +251,6 @@ int main()
     test_parse_ifname_with_netns_path();
     test_resolve_failures();
     test_netns_invariance_after_resolve();
-    test_netns_restore_failure_simulation();
     std::cout << "All options regression and unit tests passed successfully!" << std::endl;
     return 0;
 }
