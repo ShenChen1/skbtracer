@@ -4,14 +4,16 @@
 // clang-format on
 
 #include <bpf/bpf_core_read.h>
+#include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
 #define RINGBUF_SIZE (256 * 1024)
 
-#ifndef IPPROTO_ICMPV6
-#define IPPROTO_ICMPV6 58
-#endif
+#define ETH_P_IP 0x0800
+#define ETH_P_IPV6 0x86dd
+#define ETH_P_8021Q 0x8100
+#define ETH_P_8021AD 0x88a8
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -19,6 +21,32 @@ struct {
 } events SEC(".maps");
 
 const volatile struct skb_config cfg;
+
+static __always_inline bool is_vlan_proto(__be16 proto)
+{
+    return proto == bpf_htons(ETH_P_8021Q) ||
+           proto == bpf_htons(ETH_P_8021AD);
+}
+
+/* Locate true L3 header offset by skipping 802.1Q / 802.1ad VLAN tags (up to 2 layers for QinQ) */
+static __always_inline u16 get_l3_header_offset(struct sk_buff *skb, void *head)
+{
+    u16 l3_off = BPF_CORE_READ(skb, network_header);
+    __be16 proto = BPF_CORE_READ(skb, protocol);
+
+    #pragma unroll
+    for (int i = 0; i < 2; i++) {
+        if (!is_vlan_proto(proto)) {
+            break;
+        }
+
+        struct vlan_hdr *vhdr = head + l3_off;
+        proto = BPF_CORE_READ(vhdr, h_vlan_encapsulated_proto);
+        l3_off += sizeof(struct vlan_hdr);
+    }
+
+    return l3_off;
+}
 
 static __always_inline u32 get_netns(struct sk_buff *skb)
 {
@@ -86,62 +114,92 @@ static __always_inline bool filter(struct sk_buff *skb)
     return filter_pcap(skb) && filter_meta(skb);
 }
 
-static __always_inline void set_output(void *ctx, struct sk_buff *skb, struct skb_event *event)
+static __always_inline void set_meta(struct sk_buff *skb, struct skb_meta *meta)
 {
-    event->ifindex = BPF_CORE_READ(skb, dev, ifindex);
-    event->netns = get_netns(skb);
-    event->pkt_type = BPF_CORE_READ_BITFIELD_PROBED(skb, pkt_type);
-    event->ip_version = 0;
-    event->protocol = 0;
-    event->sport = 0;
-    event->dport = 0;
-    event->pad = 0;
-    event->saddr.v6addr.d1 = 0;
-    event->saddr.v6addr.d2 = 0;
-    event->daddr.v6addr.d1 = 0;
-    event->daddr.v6addr.d2 = 0;
+    meta->netns = get_netns(skb);
+    meta->mark = BPF_CORE_READ(skb, mark);
+    meta->ifindex = BPF_CORE_READ(skb, dev, ifindex);
+    meta->len = BPF_CORE_READ(skb, len);
+    meta->mtu = BPF_CORE_READ(skb, dev, mtu);
+}
+
+static __always_inline void __set_tuple(struct skb_tuple *tuple, void *head, u16 l3_off, bool is_ipv4)
+{
+    void *ip_hdr_addr = head + l3_off;
+    void *trans_hdr;
+
+    if (is_ipv4) {
+        struct iphdr ip;
+        if (bpf_probe_read_kernel(&ip, sizeof(ip), ip_hdr_addr) < 0) {
+            return;
+        }
+
+        tuple->l3_proto = ETH_P_IP;
+        tuple->l4_proto = ip.protocol;
+        tuple->saddr.v4addr = ip.saddr;
+        tuple->daddr.v4addr = ip.daddr;
+        trans_hdr = ip_hdr_addr + (ip.ihl * 4);
+    } else {
+        struct ipv6hdr ip6;
+        if (bpf_probe_read_kernel(&ip6, sizeof(ip6), ip_hdr_addr) < 0) {
+            return;
+        }
+
+        tuple->l3_proto = ETH_P_IPV6;
+        tuple->l4_proto = ip6.nexthdr;
+        __builtin_memcpy(&tuple->saddr.v6addr, &ip6.saddr, sizeof(tuple->saddr.v6addr));
+        __builtin_memcpy(&tuple->daddr.v6addr, &ip6.daddr, sizeof(tuple->daddr.v6addr));
+        trans_hdr = ip_hdr_addr + sizeof(struct ipv6hdr);
+    }
+
+    if (tuple->l4_proto == IPPROTO_TCP) {
+        struct tcphdr tcp;
+        if (bpf_probe_read_kernel(&tcp, sizeof(tcp), trans_hdr) == 0) {
+            tuple->sport = tcp.source;
+            tuple->dport = tcp.dest;
+            tuple->tcp_flags = ((const __u8 *)&tcp)[13];
+        }
+    } else if (tuple->l4_proto == IPPROTO_UDP) {
+        struct udphdr udp;
+        if (bpf_probe_read_kernel(&udp, sizeof(udp), trans_hdr) == 0) {
+            tuple->sport = udp.source;
+            tuple->dport = udp.dest;
+        }
+    }
+}
+
+static __always_inline void set_tuple(struct sk_buff *skb, struct skb_tuple *tuple)
+{
+    tuple->l3_proto = 0;
+    tuple->l4_proto = 0;
+    tuple->tcp_flags = 0;
+    tuple->sport = 0;
+    tuple->dport = 0;
+    tuple->saddr.v6addr.d1 = 0;
+    tuple->saddr.v6addr.d2 = 0;
+    tuple->daddr.v6addr.d1 = 0;
+    tuple->daddr.v6addr.d2 = 0;
 
     void *head = BPF_CORE_READ(skb, head);
-    u16 network_header = BPF_CORE_READ(skb, network_header);
-    void *ip_hdr_addr = head + network_header;
+    u16 l3_off = get_l3_header_offset(skb, head);
+    void *ip_hdr_addr = head + l3_off;
 
-    struct iphdr ip;
-    if (bpf_probe_read_kernel(&ip, sizeof(ip), ip_hdr_addr) < 0) {
+    struct iphdr l3_hdr;
+    if (bpf_probe_read_kernel(&l3_hdr, sizeof(l3_hdr), ip_hdr_addr) < 0) {
         return;
     }
 
-    if (ip.version == 4) {
-        event->ip_version = 4;
-        event->protocol = ip.protocol;
-        event->saddr.v4addr = ip.saddr;
-        event->daddr.v4addr = ip.daddr;
-
-        if (event->protocol == IPPROTO_TCP || event->protocol == IPPROTO_UDP) {
-            struct udphdr uh;
-            void *trans_hdr = ip_hdr_addr + (ip.ihl * 4);
-            if (bpf_probe_read_kernel(&uh, sizeof(uh), trans_hdr) == 0) {
-                event->sport = __builtin_bswap16(uh.source);
-                event->dport = __builtin_bswap16(uh.dest);
-            }
-        }
-    } else if (ip.version == 6) {
-        struct ipv6hdr ip6;
-        if (bpf_probe_read_kernel(&ip6, sizeof(ip6), ip_hdr_addr) == 0) {
-            event->ip_version = 6;
-            event->protocol = ip6.nexthdr;
-            __builtin_memcpy(&event->saddr.v6addr, &ip6.saddr, sizeof(event->saddr.v6addr));
-            __builtin_memcpy(&event->daddr.v6addr, &ip6.daddr, sizeof(event->daddr.v6addr));
-
-            if (event->protocol == IPPROTO_TCP || event->protocol == IPPROTO_UDP) {
-                struct udphdr uh;
-                void *trans_hdr = ip_hdr_addr + sizeof(struct ipv6hdr);
-                if (bpf_probe_read_kernel(&uh, sizeof(uh), trans_hdr) == 0) {
-                    event->sport = __builtin_bswap16(uh.source);
-                    event->dport = __builtin_bswap16(uh.dest);
-                }
-            }
-        }
+    if (l3_hdr.version != 4 && l3_hdr.version != 6) {
+        return;
     }
+
+    __set_tuple(tuple, head, l3_off, l3_hdr.version == 4);
+}
+
+static __always_inline void set_output(void *ctx, struct sk_buff *skb, struct skb_event *event)
+{
+    set_meta(skb, &event->meta);
+    set_tuple(skb, &event->tuple);
 }
 
 static __always_inline int kprobe_skb(struct sk_buff *skb, struct pt_regs *ctx)
@@ -156,11 +214,10 @@ static __always_inline int kprobe_skb(struct sk_buff *skb, struct pt_regs *ctx)
     }
 
     event->pid = bpf_get_current_pid_tgid() >> 32;
-    event->ts = bpf_ktime_get_ns();
     event->cpu_id = bpf_get_smp_processor_id();
+    event->ts = bpf_ktime_get_ns();
     event->skb_addr = (u64)skb;
     event->addr = bpf_get_func_ip(ctx);
-    bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
     set_output(ctx, skb, event);
 

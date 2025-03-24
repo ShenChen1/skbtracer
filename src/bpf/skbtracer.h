@@ -9,23 +9,32 @@ union addr {
     } v6addr;
 } __attribute__((packed));
 
-struct skb_event {
-    __u64 ts;
-    __u64 skb_addr;
-    __u64 addr;
-    __u32 pid;
-    __u32 cpu_id;
+struct skb_meta {
+    __u32 netns;
+    __u32 mark;
+    __u32 ifindex;
+    __u32 len;
+    __u32 mtu;
+} __attribute__((packed));
+
+struct skb_tuple {
     union addr saddr;
     union addr daddr;
     __u16 sport;
     __u16 dport;
-    __u8 ip_version;
-    __u8 protocol;
-    __u8 pkt_type;
-    __u8 pad;
-    __u32 ifindex;
-    __u32 netns;
-    char comm[16];
+    __u16 l3_proto;
+    __u8 l4_proto;
+    __u8 tcp_flags;
+} __attribute__((packed));
+
+struct skb_event {
+    __u32 pid;
+    __u32 cpu_id;
+    __u64 ts;
+    __u64 skb_addr;
+    __u64 addr;
+    struct skb_meta meta;
+    struct skb_tuple tuple;
 } __attribute__((packed));
 
 struct skb_config {

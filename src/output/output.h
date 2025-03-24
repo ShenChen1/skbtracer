@@ -21,6 +21,7 @@ class Output {
 
     static const char *get_protocol_name(uint8_t protocol);
     static bool protocol_has_ports(uint8_t protocol);
+    static std::string format_tuple(const skb_tuple &tuple, const skb_meta &meta);
     static std::string format_tuple(const skb_event &event);
 
     static void register_ifname(uint32_t netns, uint32_t ifindex, const std::string &ifname);
