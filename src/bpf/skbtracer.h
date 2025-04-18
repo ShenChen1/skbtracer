@@ -13,8 +13,9 @@ struct skb_meta {
     __u32 netns;
     __u32 mark;
     __u32 ifindex;
-    __u32 len;
     __u32 mtu;
+    __u32 len;
+    __u16 proto;
 } __attribute__((packed));
 
 struct skb_tuple {
@@ -43,7 +44,6 @@ struct skb_config {
     __u32 ifindex;
     __u8 output_meta;
     __u8 output_tuple;
-    __u8 output_skb;
     __u8 output_stack;
     __u8 is_set;
 } __attribute__((packed));

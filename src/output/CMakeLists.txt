@@ -1,6 +1,10 @@
 project(output)
 
 add_library(${PROJECT_NAME} STATIC
+    dev_cache.cpp
+    meta_output.cpp
+    time_output.cpp
+    tuple_output.cpp
     output.cpp)
 
 target_include_directories(${PROJECT_NAME}

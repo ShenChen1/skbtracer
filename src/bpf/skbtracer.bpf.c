@@ -121,6 +121,7 @@ static __always_inline void set_meta(struct sk_buff *skb, struct skb_meta *meta)
     meta->ifindex = BPF_CORE_READ(skb, dev, ifindex);
     meta->len = BPF_CORE_READ(skb, len);
     meta->mtu = BPF_CORE_READ(skb, dev, mtu);
+    meta->proto = BPF_CORE_READ(skb, protocol);
 }
 
 static __always_inline void __set_tuple(struct skb_tuple *tuple, void *head, u16 l3_off, bool is_ipv4)

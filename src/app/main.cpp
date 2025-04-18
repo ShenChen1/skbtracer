@@ -14,6 +14,7 @@ static void sig_handler(int sig)
 
 int main(int argc, char **argv)
 {
+    spdlog::set_pattern("%v");
     auto args = Options::parse_args(argc, argv);
     if (args.verbose) {
         Options::dump_args(args);

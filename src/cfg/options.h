@@ -16,8 +16,11 @@ typedef struct {
     uint32_t filter_ifindex;
     uint32_t filter_netns_id;
 
-    bool output_skb;
+    bool output_meta;
+    bool output_tuple;
     bool output_stack;
+
+    std::string timestamp;
 
     int verbose;
 } args;
@@ -29,4 +32,3 @@ bool resolve_netns_and_ifname(args &args, std::string &err_msg);
 }
 
 #endif //__OPTIONS_H__
-

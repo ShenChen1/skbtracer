@@ -20,8 +20,10 @@ static void usage()
               << "  -f, --filter-func     Regex to filter kernel functions (default: trace all kernel skb functions)\n"
               << "  -m, --filter-mark     Filter by skb mark (e.g. 100 or 0x64)\n"
               << "  -i, --filter-ifname   filter skb ifname in --filter-netns (if not specified, use current netns)\n"
-              << "      --filter-netns    filter netns (\"/proc/<pid>/ns/net\", \"inode:<inode>\")\n"
-              << "  -s, --output-skb      Output detailed skb metadata\n\n"
+              << "  -n, --filter-netns    filter netns (\"/proc/<pid>/ns/net\", \"inode:<inode>\")\n"
+              << "  -M, --output-meta     Output skb metadata (len, mtu, mark, ifname, netns)\n"
+              << "  -T, --output-tuple    Output network tuple (ip, port, proto, tcpflags)\n"
+              << "  -t, --timestamp       Print timestamp per skb (\"current\", \"relative\", \"absolute\", \"none\") (default \"none\")\n\n"
               << "Examples:\n"
               << "  skbtracer 'icmp'\n"
               << "  skbtracer 'icmp6'\n"
@@ -198,7 +200,9 @@ int Options::dump_args(const Options::args &args)
     std::cout << "filter_netns: " << args.filter_netns << std::endl;
     std::cout << "filter_netns_id: " << args.filter_netns_id << std::endl;
     std::cout << "filter_pcap: " << args.filter_pcap << std::endl;
-    std::cout << "output_skb: " << args.output_skb << std::endl;
+    std::cout << "output_meta: " << args.output_meta << std::endl;
+    std::cout << "output_tuple: " << args.output_tuple << std::endl;
+    std::cout << "timestamp: " << args.timestamp << std::endl;
     std::cout << "verbose: " << args.verbose << std::endl;
     return 0;
 }
@@ -206,21 +210,20 @@ int Options::dump_args(const Options::args &args)
 const Options::args Options::parse_args(int argc, char **argv)
 {
     Options::args args{};
+    args.timestamp = "none";
     optind = 0;
 
-    enum {
-        OPT_FILTER_NETNS = 1000,
-    };
-
-    const char *const short_options = "hvf:m:i:s";
+    const char *const short_options = "hvf:m:i:n:MTt:";
     const option long_options[] = {
         option{ "help", no_argument, nullptr, 'h' },
         option{ "verbose", no_argument, nullptr, 'v' },
         option{ "filter-func", required_argument, nullptr, 'f' },
         option{ "filter-mark", required_argument, nullptr, 'm' },
         option{ "filter-ifname", required_argument, nullptr, 'i' },
-        option{ "filter-netns", required_argument, nullptr, OPT_FILTER_NETNS },
-        option{ "output-skb", no_argument, nullptr, 's' },
+        option{ "filter-netns", required_argument, nullptr, 'n' },
+        option{ "output-meta", no_argument, nullptr, 'M' },
+        option{ "output-tuple", no_argument, nullptr, 'T' },
+        option{ "timestamp", required_argument, nullptr, 't' },
         option{ nullptr, 0, nullptr, 0 }, // Must be last
     };
 
@@ -251,7 +254,7 @@ const Options::args Options::parse_args(int argc, char **argv)
                 }
                 args.filter_ifname = optarg;
                 break;
-            case OPT_FILTER_NETNS:
+            case 'n':
                 if (!optarg || optarg[0] == '\0') {
                     std::cerr << "Error: --filter-netns cannot be empty\n";
                     usage();
@@ -259,9 +262,28 @@ const Options::args Options::parse_args(int argc, char **argv)
                 }
                 args.filter_netns = optarg;
                 break;
-            case 's':
-                args.output_skb = true;
+            case 'M':
+                args.output_meta = true;
                 break;
+            case 'T':
+                args.output_tuple = true;
+                break;
+            case 't': {
+                if (!optarg || optarg[0] == '\0') {
+                    std::cerr << "Error: --timestamp cannot be empty\n";
+                    usage();
+                    exit(1);
+                }
+                std::string ts_val = optarg;
+                if (ts_val != "current" && ts_val != "relative" && ts_val != "absolute" && ts_val != "none") {
+                    std::cerr << "Error: Invalid value for --timestamp: '" << ts_val
+                              << "'. Supported values are: \"current\", \"relative\", \"absolute\", \"none\"\n";
+                    usage();
+                    exit(1);
+                }
+                args.timestamp = ts_val;
+                break;
+            }
             default:
                 usage();
                 exit(1);

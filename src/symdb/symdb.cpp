@@ -200,6 +200,9 @@ int SymdbMgr::init()
 std::pair<int, std::string> SymdbMgr::get_func_by_addr(const unsigned long addr) const
 {
     auto p = static_cast<symdb_mgr_priv_t *>(priv);
+    if (p == nullptr || p->ksyms == nullptr) {
+        return { -ENOENT, "" };
+    }
     auto sym = bpfhelper::ksyms__map_addr(p->ksyms, addr);
     if (sym == NULL) {
         return { -ENOENT, "" };
@@ -211,6 +214,9 @@ std::pair<int, std::string> SymdbMgr::get_func_by_addr(const unsigned long addr)
 std::pair<int, unsigned long> SymdbMgr::get_addr_by_func(const std::string &func) const
 {
     auto p = static_cast<symdb_mgr_priv_t *>(priv);
+    if (p == nullptr || p->ksyms == nullptr) {
+        return { -ENOENT, 0 };
+    }
     auto sym = bpfhelper::ksyms__get_symbol(p->ksyms, func.c_str());
     if (sym == NULL) {
         return { -ENOENT, 0 };

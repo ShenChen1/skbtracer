@@ -159,7 +159,8 @@ int TraceMgr::init(const Options::args &args)
     p->filter_pcap = args.filter_pcap;
 
     /* pass cfg */
-    p->skel->rodata->cfg.output_skb = args.output_skb;
+    p->skel->rodata->cfg.output_meta = args.output_meta;
+    p->skel->rodata->cfg.output_tuple = args.output_tuple;
     p->skel->rodata->cfg.output_stack = args.output_stack;
     p->skel->rodata->cfg.mark = args.filter_mark;
     p->skel->rodata->cfg.ifindex = args.filter_ifindex;
