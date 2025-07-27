@@ -301,6 +301,9 @@ const Options::args Options::parse_args(int argc, char **argv)
         args.filter_pcap += argv[optind++];
         args.filter_pcap += " ";
     }
+    if (!args.filter_pcap.empty() && args.filter_pcap.back() == ' ') {
+        args.filter_pcap.pop_back();
+    }
 
     return args;
 }

@@ -21,7 +21,6 @@ Output::~Output()
 
 int Output::init(const Options::args &args)
 {
-    spdlog::set_pattern("%v");
     output_meta = args.output_meta;
     output_tuple = args.output_tuple;
     start_ts = 0;
@@ -55,6 +54,7 @@ int Output::print_header()
         base = common_base;
     }
 
+    spdlog::set_pattern("%v");
     if (output_meta && output_tuple) {
         spdlog::info("{} {} {}", base, MetaOutput::format_header(), "TUPLE");
     } else if (output_meta) {

@@ -65,10 +65,10 @@
         .off   = 0,                                             \
         .imm   = LEN })
 
-int get_insns_for_filter_empty(struct bpf_insn *data, int *len)
+int get_insns_for_constant_filter(int result, struct bpf_insn *data, int *len)
 {
     const struct bpf_insn insns[] = {
-        BPF_MOV64_IMM(BPF_REG_0, 1),
+        BPF_MOV64_IMM(BPF_REG_0, result ? 1 : 0),
         BPF_EXIT_INSN(),
     };
 

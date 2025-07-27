@@ -8,6 +8,7 @@
 #include <map>
 #include <regex>
 #include <spdlog/spdlog.h>
+#include <utility>
 
 #include "pcap2bpf.h"
 #include "skbtracer.h"
@@ -19,7 +20,8 @@ namespace libbpf {
 }
 
 typedef struct {
-    std::string filter_pcap;
+    std::vector<libbpf::bpf_insn> filter_pcap_l2;
+    std::vector<libbpf::bpf_insn> filter_pcap_l3;
     std::map<int, libbpf::bpf_program *> prog_mapping_list;
     std::map<std::string, libbpf::bpf_link *> link_mapping_list;
     libbpf::skbtracer_bpf *skel;
@@ -30,6 +32,30 @@ typedef struct {
     TraceMgr::output_callback_t output_cb;
     void *ctx;
 } trace_mgr_priv_t;
+
+static int prepare_pcap_filters(trace_mgr_priv_t *p, const std::string &expression)
+{
+    auto [l2_ret, l2_insns] = pcap2bpf::compile_ebpf_filter(expression, false);
+    auto [l3_ret, l3_insns] = pcap2bpf::compile_ebpf_filter(expression, true);
+
+    if (l2_ret && l3_ret) {
+        spdlog::error("Failed to compile PCAP expression '{}' for Ethernet (error {}) and RAW (error {})",
+                      expression, l2_ret, l3_ret);
+        return l2_ret;
+    }
+    if (l2_ret) {
+        spdlog::warn("PCAP expression '{}' failed for Ethernet (error {}); L2 packets will not match", expression, l2_ret);
+        l2_insns = pcap2bpf::make_constant_filter(false);
+    }
+    if (l3_ret) {
+        spdlog::warn("PCAP expression '{}' failed for RAW (error {}); L3 packets will not match", expression, l3_ret);
+        l3_insns = pcap2bpf::make_constant_filter(false);
+    }
+
+    p->filter_pcap_l2 = std::move(l2_insns);
+    p->filter_pcap_l3 = std::move(l3_insns);
+    return 0;
+}
 
 static int custom_prepare_load_skbtracer_prog(libbpf::bpf_program *prog, libbpf::bpf_prog_load_opts *opts, long cookie)
 {
@@ -55,22 +81,17 @@ static int custom_prepare_load_skbtracer_prog(libbpf::bpf_program *prog, libbpf:
         spdlog::info("Injecting eBPF filter into {} for {}", func_name, libbpf::bpf_program__name(prog));
 
         bool is_l3 = func_name[std::strlen(func_prefix)] == '3';
-        auto [ret, insn, len] = pcap2bpf::compile_ebpf_filter(p->filter_pcap, is_l3);
-        if (ret) {
-            spdlog::error("Failed to compile eBPF filter");
-            return ret;
-        }
+        const auto &insns = is_l3 ? p->filter_pcap_l3 : p->filter_pcap_l2;
 
         constexpr size_t STUB_ORIG_LEN = 7;
         size_t current_pos = func_info[i].insn_off + offset;
-        int inject_ret = pcap2bpf::inject_ebpf_filter(prog, current_pos, STUB_ORIG_LEN, insn, len);
-        delete[] insn;
+        int inject_ret = pcap2bpf::inject_ebpf_filter(prog, current_pos, STUB_ORIG_LEN, insns);
         if (inject_ret != 0) {
             spdlog::error("Failed to inject eBPF filter into {}: {}", func_name, inject_ret);
             return inject_ret;
         }
 
-        offset += ((ssize_t)len - (ssize_t)STUB_ORIG_LEN);
+        offset += ((ssize_t)insns.size() - (ssize_t)STUB_ORIG_LEN);
     }
 
     // drop func_info and line_info to avoid verification failure
@@ -156,7 +177,10 @@ TraceMgr::~TraceMgr()
 int TraceMgr::init(const Options::args &args)
 {
     auto p = static_cast<trace_mgr_priv_t *>(priv);
-    p->filter_pcap = args.filter_pcap;
+    int err = prepare_pcap_filters(p, args.filter_pcap);
+    if (err) {
+        return err;
+    }
 
     /* pass cfg */
     p->skel->rodata->cfg.output_meta = args.output_meta;
@@ -166,7 +190,7 @@ int TraceMgr::init(const Options::args &args)
     p->skel->rodata->cfg.ifindex = args.filter_ifindex;
     p->skel->rodata->cfg.netns = args.filter_netns_id;
 
-    int err = libbpf::skbtracer_bpf__load(p->skel);
+    err = libbpf::skbtracer_bpf__load(p->skel);
     if (err) {
         spdlog::error("Failed to load BPF skeleton: {}", err);
         return err;

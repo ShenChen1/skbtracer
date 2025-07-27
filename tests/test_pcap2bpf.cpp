@@ -3,19 +3,19 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "pcap2bpf.h"
 
 extern "C" {
-int get_insns_for_filter_empty(libbpf::bpf_insn *data, int *len);
+int get_insns_for_constant_filter(int result, libbpf::bpf_insn *data, int *len);
 }
 
 static void test_empty_filter()
 {
-    auto [err, insns, len] = pcap2bpf::compile_ebpf_filter("", false);
+    auto [err, insns] = pcap2bpf::compile_ebpf_filter("", false);
     assert(err == 0);
-    assert(insns != nullptr);
-    assert(len == 2);
+    assert(insns.size() == 2);
     // Verify default pass instructions:
     // 1: r0 = 1
     // 2: exit
@@ -23,31 +23,36 @@ static void test_empty_filter()
     assert(insns[0].dst_reg == libbpf::BPF_REG_0);
     assert(insns[0].imm == 1);
     assert(insns[1].code == (BPF_JMP | BPF_EXIT));
-    delete[] insns;
     std::cout << "[PASS] test_empty_filter" << std::endl;
 }
 
-static void test_get_insns_for_filter_empty_boundaries()
+static void test_get_insns_for_constant_filter_boundaries()
 {
     // Test null len pointer
-    assert(get_insns_for_filter_empty(nullptr, nullptr) == -EINVAL);
+    assert(get_insns_for_constant_filter(1, nullptr, nullptr) == -EINVAL);
 
     // Test query len with null data
     int len = 0;
-    assert(get_insns_for_filter_empty(nullptr, &len) == 0);
+    assert(get_insns_for_constant_filter(1, nullptr, &len) == 0);
     assert(len == 2);
 
     // Test buffer too small
     len = 1;
     libbpf::bpf_insn small_buf[1];
-    assert(get_insns_for_filter_empty(small_buf, &len) == -EINVAL);
+    assert(get_insns_for_constant_filter(1, small_buf, &len) == -EINVAL);
 
-    // Test normal fill
+    // Test accepting filter
     len = 2;
-    libbpf::bpf_insn valid_buf[2];
-    assert(get_insns_for_filter_empty(valid_buf, &len) == 0);
+    libbpf::bpf_insn valid_buf[2]{};
+    assert(get_insns_for_constant_filter(1, valid_buf, &len) == 0);
     assert(len == 2);
-    std::cout << "[PASS] test_get_insns_for_filter_empty_boundaries" << std::endl;
+    assert(valid_buf[0].imm == 1);
+
+    // Test rejecting filter
+    len = 2;
+    assert(get_insns_for_constant_filter(0, valid_buf, &len) == 0);
+    assert(valid_buf[0].imm == 0);
+    std::cout << "[PASS] test_get_insns_for_constant_filter_boundaries" << std::endl;
 }
 
 static void test_valid_filters()
@@ -58,12 +63,10 @@ static void test_valid_filters()
     };
 
     for (const auto &filter : valid_cases) {
-        auto [err, insns, len] = pcap2bpf::compile_ebpf_filter(filter, false);
+        auto [err, insns] = pcap2bpf::compile_ebpf_filter(filter, false);
         assert(err == 0);
-        assert(insns != nullptr);
-        assert(len > 0);
-        delete[] insns;
-        std::cout << "[PASS] test_valid_filter: " << filter << " (len=" << len << ")" << std::endl;
+        assert(!insns.empty());
+        std::cout << "[PASS] test_valid_filter: " << filter << " (len=" << insns.size() << ")" << std::endl;
     }
 }
 
@@ -74,21 +77,18 @@ static void test_l3_filter()
     };
 
     for (const auto &filter : l3_cases) {
-        auto [err, insns, len] = pcap2bpf::compile_ebpf_filter(filter, true);
+        auto [err, insns] = pcap2bpf::compile_ebpf_filter(filter, true);
         assert(err == 0);
-        assert(insns != nullptr);
-        assert(len > 0);
-        delete[] insns;
-        std::cout << "[PASS] test_l3_filter: " << filter << " (len=" << len << ")" << std::endl;
+        assert(!insns.empty());
+        std::cout << "[PASS] test_l3_filter: " << filter << " (len=" << insns.size() << ")" << std::endl;
     }
 }
 
 static void test_invalid_filter_syntax()
 {
-    auto [err, insns, len] = pcap2bpf::compile_ebpf_filter("invalid syntax &&& @@@", false);
+    auto [err, insns] = pcap2bpf::compile_ebpf_filter("invalid syntax &&& @@@", false);
     assert(err != 0);
-    assert(insns == nullptr);
-    assert(len == 0);
+    assert(insns.empty());
     std::cout << "[PASS] test_invalid_filter_syntax (expected error=" << err << ")" << std::endl;
 }
 
@@ -128,7 +128,7 @@ static void exec_alu(uint64_t *regs, const libbpf::bpf_insn &insn)
     regs[insn.dst_reg] = is64 ? res : (uint32_t)res;
 }
 
-static bool eval_jmp_cond(uint64_t dst, uint64_t src, uint8_t op)
+static bool eval_jmp_cond(uint64_t dst, uint64_t src, uint8_t op, bool is32)
 {
     switch (op) {
     case BPF_JA:   return true;
@@ -139,7 +139,9 @@ static bool eval_jmp_cond(uint64_t dst, uint64_t src, uint8_t op)
     case BPF_JLT:  return dst < src;
     case BPF_JLE:  return dst <= src;
     case BPF_JSET: return (dst & src) != 0;
-    case BPF_JSLT: return (int64_t)dst < (int64_t)src;
+    case BPF_JSLT:
+        return is32 ? static_cast<int32_t>(dst) < static_cast<int32_t>(src)
+                    : static_cast<int64_t>(dst) < static_cast<int64_t>(src);
     default: return false;
     }
 }
@@ -167,7 +169,7 @@ static bool exec_jmp(uint64_t *regs, const libbpf::bpf_insn &insn, size_t &pc, b
                    (is32 ? (uint32_t)regs[insn.src_reg] : regs[insn.src_reg]) :
                    (is32 ? (uint32_t)insn.imm : (uint64_t)(int64_t)insn.imm);
 
-    if (eval_jmp_cond(dst, src, op)) {
+    if (eval_jmp_cond(dst, src, op, is32)) {
         pc += (int16_t)insn.off;
     }
     return true;
@@ -215,6 +217,62 @@ static uint64_t run_bpf_prog(const libbpf::bpf_insn *insns, size_t count, void *
     return regs[libbpf::BPF_REG_0];
 }
 
+static void test_linktype_specific_filter_compilation()
+{
+    auto [err, l2_insns] = pcap2bpf::compile_ebpf_filter("vlan", false);
+    assert(err == 0);
+    assert(!l2_insns.empty());
+
+    uint8_t vlan_packet[18] = {
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+        0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+        0x81, 0x00, 0x00, 0x64, 0x08, 0x00,
+    };
+    assert(run_bpf_prog(l2_insns.data(), l2_insns.size(),
+                        vlan_packet, vlan_packet + sizeof(vlan_packet)) == 1);
+
+    auto [l3_err, l3_insns] = pcap2bpf::compile_ebpf_filter("vlan", true);
+    assert(l3_err != 0);
+    assert(l3_insns.empty());
+
+    auto reject_insns = pcap2bpf::make_constant_filter(false);
+    assert(reject_insns.size() == 2);
+    assert(reject_insns[0].src_reg == 0);
+    assert(reject_insns[0].off == 0);
+    assert(reject_insns[1].dst_reg == 0);
+    assert(reject_insns[1].src_reg == 0);
+    assert(reject_insns[1].off == 0);
+    assert(reject_insns[1].imm == 0);
+    assert(run_bpf_prog(reject_insns.data(), reject_insns.size(),
+                        vlan_packet, vlan_packet + sizeof(vlan_packet)) == 0);
+    std::cout << "[PASS] test_linktype_specific_filter_compilation" << std::endl;
+}
+
+static void test_jmp32_signed_comparison()
+{
+    libbpf::bpf_insn insns[6]{};
+    insns[0].code = BPF_ALU | BPF_MOV | BPF_K;
+    insns[0].dst_reg = libbpf::BPF_REG_0;
+    insns[0].imm = -1;
+    insns[1].code = BPF_JMP32 | BPF_JSLT | BPF_K;
+    insns[1].dst_reg = libbpf::BPF_REG_0;
+    insns[1].off = 2;
+    insns[2].code = BPF_ALU | BPF_MOV | BPF_K;
+    insns[2].dst_reg = libbpf::BPF_REG_0;
+    insns[2].imm = 0;
+    insns[3].code = BPF_JMP | BPF_EXIT;
+    insns[4].code = BPF_ALU | BPF_MOV | BPF_K;
+    insns[4].dst_reg = libbpf::BPF_REG_0;
+    insns[4].imm = 1;
+    insns[5].code = BPF_JMP | BPF_EXIT;
+
+    uint8_t packet[1] = {0};
+    uint64_t result = run_bpf_prog(insns, sizeof(insns) / sizeof(insns[0]),
+                                   packet, packet + sizeof(packet));
+    assert(result == 1);
+    std::cout << "[PASS] test_jmp32_signed_comparison" << std::endl;
+}
+
 static void test_packet_truncation_boundary()
 {
     // Ethernet + IPv4 + TCP packet (dest port 80 = 0x0050)
@@ -229,25 +287,23 @@ static void test_packet_truncation_boundary()
         0x50, 0x02, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00
     };
 
-    auto [err, insns, len] = pcap2bpf::compile_ebpf_filter("tcp and dst port 80", false);
+    auto [err, insns] = pcap2bpf::compile_ebpf_filter("tcp and dst port 80", false);
     assert(err == 0);
-    assert(insns != nullptr);
-    assert(len > 0);
+    assert(!insns.empty());
 
     // Happy path: Full packet, must match (returns 1)
-    uint64_t res_full = run_bpf_prog(insns, len, pkt, pkt + sizeof(pkt));
+    uint64_t res_full = run_bpf_prog(insns.data(), insns.size(), pkt, pkt + sizeof(pkt));
     assert(res_full == 1);
 
     // Truncated packet: Only 14 bytes (Ethernet only, TCP header is outside data_end).
     // Must NOT match and must return 0 (drop/mismatch) due to data_end bounds check!
-    uint64_t res_truncated = run_bpf_prog(insns, len, pkt, pkt + 14);
+    uint64_t res_truncated = run_bpf_prog(insns.data(), insns.size(), pkt, pkt + 14);
     assert(res_truncated == 0);
 
     // Inverted/corrupted bounds: data_end < data. Must return 0.
-    uint64_t res_inverted = run_bpf_prog(insns, len, pkt + 20, pkt + 10);
+    uint64_t res_inverted = run_bpf_prog(insns.data(), insns.size(), pkt + 20, pkt + 10);
     assert(res_inverted == 0);
 
-    delete[] insns;
     std::cout << "[PASS] test_packet_truncation_boundary" << std::endl;
 }
 
@@ -324,10 +380,12 @@ int main()
 {
     std::cout << "Running pcap2bpf unit tests..." << std::endl;
     test_empty_filter();
-    test_get_insns_for_filter_empty_boundaries();
+    test_get_insns_for_constant_filter_boundaries();
     test_valid_filters();
     test_l3_filter();
     test_invalid_filter_syntax();
+    test_linktype_specific_filter_compilation();
+    test_jmp32_signed_comparison();
     test_packet_truncation_boundary();
     test_ind_and_overflow_boundaries();
     std::cout << "All pcap2bpf unit tests passed successfully!" << std::endl;

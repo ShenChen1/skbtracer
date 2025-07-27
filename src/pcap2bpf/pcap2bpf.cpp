@@ -1,6 +1,6 @@
+#include <algorithm>
 #include <string>
 #include <vector>
-#include <cstring>
 #include <spdlog/spdlog.h>
 
 #include "pcap2bpf.h"
@@ -14,7 +14,7 @@ extern "C" {
 extern "C" {
 int bpf_convert_filter(libbpf::sock_filter *prog, int len,
                        libbpf::bpf_insn *new_prog, int *new_len);
-int get_insns_for_filter_empty(libbpf::bpf_insn *data, int *len);
+int get_insns_for_constant_filter(int result, libbpf::bpf_insn *data, int *len);
 }
 
 static std::pair<int, libbpf::sock_fprog> compile_cbpf_filter(const std::string &filter_str, bool l3)
@@ -32,7 +32,7 @@ static std::pair<int, libbpf::sock_fprog> compile_cbpf_filter(const std::string 
     }
 
     if (cbpf::pcap_compile(pcap, &bf, filter_str.c_str(), 1, PCAP_NETMASK_UNKNOWN) != 0) {
-        spdlog::error("Invalid pcap filter expression '{}': {}", filter_str, cbpf::pcap_geterr(pcap));
+        spdlog::debug("Failed to compile BPF filter: {}", cbpf::pcap_geterr(pcap));
         err = -EINVAL;
         goto end;
     }
@@ -57,26 +57,19 @@ end:
     return { err, sf };
 }
 
-std::tuple<int, libbpf::bpf_insn *, size_t> pcap2bpf::compile_ebpf_filter(const std::string &filter_str, bool l3)
+std::pair<int, std::vector<libbpf::bpf_insn>> pcap2bpf::compile_ebpf_filter(const std::string &filter_str, bool l3)
 {
     if (filter_str.empty()) {
-        int len = 0;
-        int err = get_insns_for_filter_empty(nullptr, &len);
-        if (err) {
-            return { err, nullptr, 0 };
+        auto ebpf = make_constant_filter(true);
+        if (ebpf.empty()) {
+            return { -EINVAL, {} };
         }
-        auto ebpf = new libbpf::bpf_insn[len];
-        err = get_insns_for_filter_empty(ebpf, &len);
-        if (err) {
-            delete[] ebpf;
-            return { err, nullptr, 0 };
-        }
-        return { 0, ebpf, (size_t)len };
+        return { 0, std::move(ebpf) };
     }
 
     auto [ret, cbpf] = compile_cbpf_filter(filter_str, l3);
     if (ret) {
-        return { ret, nullptr, 0 };
+        return { ret, {} };
     }
 
     int ebpf_len = 0;
@@ -84,20 +77,35 @@ std::tuple<int, libbpf::bpf_insn *, size_t> pcap2bpf::compile_ebpf_filter(const 
     if (ret) {
         spdlog::error("Failed to calculate eBPF filter length");
         delete[] cbpf.filter;
-        return { ret, nullptr, 0 };
+        return { ret, {} };
     }
 
-    auto ebpf = new libbpf::bpf_insn[ebpf_len];
-    ret = bpf_convert_filter(cbpf.filter, cbpf.len, ebpf, &ebpf_len);
+    std::vector<libbpf::bpf_insn> ebpf(ebpf_len);
+    ret = bpf_convert_filter(cbpf.filter, cbpf.len, ebpf.data(), &ebpf_len);
     delete[] cbpf.filter;
     if (ret) {
         spdlog::error("Failed to convert cBPF filter to eBPF");
-        delete[] ebpf;
-        return { ret, nullptr, 0 };
+        return { ret, {} };
     }
 
+    ebpf.resize(ebpf_len);
     spdlog::debug("Compiled cBPF ({}) to eBPF ({} instructions)", cbpf.len, ebpf_len);
-    return { 0, ebpf, (size_t)ebpf_len };
+    return { 0, std::move(ebpf) };
+}
+
+std::vector<libbpf::bpf_insn> pcap2bpf::make_constant_filter(bool condition)
+{
+    int len = 0;
+    if (get_insns_for_constant_filter(condition, nullptr, &len)) {
+        return {};
+    }
+
+    std::vector<libbpf::bpf_insn> insns(len);
+    if (get_insns_for_constant_filter(condition, insns.data(), &len)) {
+        return {};
+    }
+    insns.resize(len);
+    return insns;
 }
 
 static bool insn_is_subprog_call(const libbpf::bpf_insn *insn)
@@ -110,7 +118,8 @@ static bool insn_is_subprog_call(const libbpf::bpf_insn *insn)
            insn->off == 0;
 }
 
-int pcap2bpf::inject_ebpf_filter(libbpf::bpf_program *prog, size_t position, size_t orig_len, const libbpf::bpf_insn *data, size_t len)
+int pcap2bpf::inject_ebpf_filter(libbpf::bpf_program *prog, size_t position, size_t orig_len,
+                                 const std::vector<libbpf::bpf_insn> &insns)
 {
     auto old_len = libbpf::bpf_program__insn_cnt(prog);
     auto old_data = libbpf::bpf_program__insns(prog);
@@ -120,35 +129,33 @@ int pcap2bpf::inject_ebpf_filter(libbpf::bpf_program *prog, size_t position, siz
         return -EINVAL;
     }
 
-    auto new_len = old_len - orig_len + len;
-    libbpf::bpf_insn *new_insn = new libbpf::bpf_insn[new_len];
-    ssize_t delta = (ssize_t)len - (ssize_t)orig_len;
+    auto new_len = old_len - orig_len + insns.size();
+    std::vector<libbpf::bpf_insn> new_insns(new_len);
+    ssize_t delta = (ssize_t)insns.size() - (ssize_t)orig_len;
 
     // 1. Copy instructions before position, updating forward calls crossing the range
     for (size_t i = 0; i < position; i++) {
-        new_insn[i] = old_data[i];
-        if (insn_is_subprog_call(&new_insn[i])) {
-            if (i + new_insn[i].imm > position) {
-                new_insn[i].imm += delta;
+        new_insns[i] = old_data[i];
+        if (insn_is_subprog_call(&new_insns[i])) {
+            if (i + new_insns[i].imm > position) {
+                new_insns[i].imm += delta;
             }
         }
     }
 
     // 2. Insert new filter instructions at position
-    std::memcpy(&new_insn[position], data, len * sizeof(libbpf::bpf_insn));
+    std::copy(insns.begin(), insns.end(), new_insns.begin() + position);
 
     // 3. Copy instructions after position + orig_len, updating backward calls crossing the range
     for (size_t i = position + orig_len; i < old_len; i++) {
-        size_t new_idx = i - orig_len + len;
-        new_insn[new_idx] = old_data[i];
-        if (insn_is_subprog_call(&new_insn[new_idx])) {
-            if (i + new_insn[new_idx].imm < position) {
-                new_insn[new_idx].imm -= delta;
+        size_t new_idx = i - orig_len + insns.size();
+        new_insns[new_idx] = old_data[i];
+        if (insn_is_subprog_call(&new_insns[new_idx])) {
+            if (i + new_insns[new_idx].imm < position) {
+                new_insns[new_idx].imm -= delta;
             }
         }
     }
 
-    int ret = libbpf::bpf_program__set_insns(prog, new_insn, new_len);
-    delete[] new_insn;
-    return ret;
+    return libbpf::bpf_program__set_insns(prog, new_insns.data(), new_insns.size());
 }

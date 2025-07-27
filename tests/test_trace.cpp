@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <iostream>
+#include <vector>
 
 #include "pcap2bpf.h"
 #include "skbtracer.h"
@@ -25,14 +26,14 @@ static void test_inject_ebpf_filter_success()
     size_t orig_cnt = libbpf::bpf_program__insn_cnt(prog);
     assert(orig_cnt > 0);
 
-    libbpf::bpf_insn dummy_insns[2]{};
+    std::vector<libbpf::bpf_insn> dummy_insns(2);
     dummy_insns[0].code = BPF_ALU64 | BPF_MOV | BPF_K;
     dummy_insns[0].dst_reg = libbpf::BPF_REG_0;
     dummy_insns[0].imm = 1;
     dummy_insns[1].code = BPF_JMP | BPF_EXIT;
 
     // Happy path: replace first instruction with two dummy instructions
-    int ret = pcap2bpf::inject_ebpf_filter(prog, 0, 1, dummy_insns, 2);
+    int ret = pcap2bpf::inject_ebpf_filter(prog, 0, 1, dummy_insns);
     assert(ret == 0);
     assert(libbpf::bpf_program__insn_cnt(prog) == orig_cnt + 1);
 
@@ -51,13 +52,13 @@ static void test_inject_ebpf_filter_bounds_failure()
     size_t insn_cnt = libbpf::bpf_program__insn_cnt(prog);
     assert(insn_cnt > 0);
 
-    libbpf::bpf_insn dummy_insn{};
-    dummy_insn.code = BPF_ALU64 | BPF_MOV | BPF_K;
-    dummy_insn.dst_reg = libbpf::BPF_REG_0;
-    dummy_insn.imm = 1;
+    std::vector<libbpf::bpf_insn> dummy_insns(1);
+    dummy_insns[0].code = BPF_ALU64 | BPF_MOV | BPF_K;
+    dummy_insns[0].dst_reg = libbpf::BPF_REG_0;
+    dummy_insns[0].imm = 1;
 
     // Failure path: position out of bounds
-    int ret = pcap2bpf::inject_ebpf_filter(prog, insn_cnt + 10, 7, &dummy_insn, 1);
+    int ret = pcap2bpf::inject_ebpf_filter(prog, insn_cnt + 10, 7, dummy_insns);
     assert(ret == -EINVAL);
 
     libbpf::skbtracer_bpf__destroy(skel);

@@ -68,7 +68,7 @@ static void test_combined_options()
     assert(args.filter_mark == 0x50);
     assert(args.output_meta == true);
     assert(args.output_tuple == false);
-    assert(args.filter_pcap == "icmp ");
+    assert(args.filter_pcap == "icmp");
     std::cout << "[PASS] test_combined_options" << std::endl;
 }
 

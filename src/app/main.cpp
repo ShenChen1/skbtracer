@@ -14,7 +14,6 @@ static void sig_handler(int sig)
 
 int main(int argc, char **argv)
 {
-    spdlog::set_pattern("%v");
     auto args = Options::parse_args(argc, argv);
     if (args.verbose) {
         Options::dump_args(args);
@@ -86,15 +85,10 @@ int main(int argc, char **argv)
         return -ENOENT;
     }
     spdlog::info("Successfully attached to {} network functions. Ready to trace packets...", attached_count);
+    output.print_header();
 
     auto cb = [](void *ctx, const void *data, size_t len) {
         Output *out = static_cast<Output*>(ctx);
-        static bool header_printed = false;
-        if (!header_printed) {
-            out->print_header();
-            header_printed = true;
-        }
-
         if (len < sizeof(skb_event)) {
             return;
         }

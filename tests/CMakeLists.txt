@@ -28,3 +28,6 @@ target_link_libraries(test_trace
     utils)
 add_test(NAME test_trace COMMAND test_trace)
 
+foreach(test_target IN ITEMS test_pcap2bpf test_options test_output test_trace)
+    target_compile_options(${test_target} PRIVATE -UNDEBUG)
+endforeach()
